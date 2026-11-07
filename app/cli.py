@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
             from app.seed import seed_reference
             print(json.dumps(seed_reference(db, args.source), indent=2))
         elif args.command == "create-user":
-            password = sys.stdin.readline().rstrip("\n") if args.password_stdin else getpass.getpass("Password: ")
+            password = sys.stdin.readline().rstrip("\r\n") if args.password_stdin else getpass.getpass("Password: ")
             if len(password) < 10:
                 print("Passwords need at least 10 characters.", file=sys.stderr)
                 return 1

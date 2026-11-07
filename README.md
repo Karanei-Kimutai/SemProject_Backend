@@ -27,6 +27,17 @@ For demos without real business data, use the sample shop CSVs from the ML engin
 - httpx for the ML service client
 - Docker Compose, with Caddy for automatic HTTPS
 
+## Set it up on Windows (for building the app)
+
+With `SemProject_MLEngine`, `SemProject_Backend` and the Android project in one folder, and Docker Desktop running:
+
+```powershell
+cd SemProject_Backend
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-local.ps1 -ResearchEmail you@example.com
+```
+
+The script checks the tools, writes `.env` with random local secrets, and refreshes the ML engine's demo export and sample shops. It also starts the stack, loads the demo store (about 7 minutes the first time), creates your research user (you type the password), and adds a `CLAUDE.md` to the app project. Steps already done are skipped, so it's safe to re-run. It needs the M5 data in `SemProject_MLEngine\data\` (copy it from wherever you have it; it isn't in Git).
+
 ## Run it locally (without Docker)
 
 You need PostgreSQL 16 and a running ML service (see the ML engine repository's `docs/operations.md`).
