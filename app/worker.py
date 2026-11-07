@@ -1,4 +1,4 @@
-"""Forecast worker: `python -m app.worker`. Claims queued runs from Postgres and processes them.
+"""Worker: `python -m app.worker`. Runs forecast jobs and drives own-data training jobs.
 
 Several workers can run at once (claims use SELECT … FOR UPDATE SKIP LOCKED). Once an hour it also
 requeues runs a crashed worker left in progress, and fills in actuals that arrived after a forecast.
@@ -12,7 +12,7 @@ import time
 
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.services import forecasting
+from app.services import forecasting, training
 
 log = logging.getLogger("worker")
 _stop = False
@@ -24,21 +24,26 @@ def _handle_stop(*_):
 
 
 def run_once() -> bool:
-    """Process at most one queued run. Returns True if one was processed."""
+    """Process at most one queued forecast (forecasts come first), else submit one training run,
+    then check running training jobs. Returns True if anything was done."""
     with get_sessionmaker()() as db:
         run_id = forecasting.claim_next(db)
-        if run_id is None:
-            return False
-        forecasting.process_run(db, run_id)
-        return True
+        if run_id is not None:
+            forecasting.process_run(db, run_id)
+            return True
+        submitted = training.submit_next(db) is not None
+        finished = training.poll_running(db)
+        return submitted or finished > 0
 
 
 def maintenance() -> None:
     with get_sessionmaker()() as db:
         requeued = forecasting.requeue_stuck(db)
         updated = forecasting.attach_new_actuals(db)
-    if requeued or updated:
-        log.info("maintenance: requeued %d stuck runs, attached actuals to %d runs", requeued, updated)
+        retrains = training.schedule_retraining(db)
+    if requeued or updated or retrains:
+        log.info("maintenance: requeued %d stuck runs, attached actuals to %d runs, queued %d retrains",
+                 requeued, updated, retrains)
 
 
 def main() -> None:

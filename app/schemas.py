@@ -200,6 +200,7 @@ class CapabilitiesOut(Api):
     prediction_intervals: bool
     baselines: list[dict]
     active_model: ModelRef | None
+    training: dict | None = None  # own-data workspaces: the latest training run
 
 
 # ---- forecasts ----------------------------------------------------------------------------
@@ -307,3 +308,38 @@ class HistorySummaryOut(Api):
     days_with_data: int
     records: int
     last_import_at: dt.datetime | None
+
+
+# ---- own-data training --------------------------------------------------------------------
+
+class TrainingRunOut(Api):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    status: str
+    outcome: str | None
+    trigger: str
+    created_at: dt.datetime
+    submitted_at: dt.datetime | None
+    finished_at: dt.datetime | None
+    history_rows: int | None
+    model: ModelRef | None
+    horizons: list[int] | None
+    eligibility: dict | None
+    backtest: dict | None
+    gate: dict | None
+    horizon_accuracy: dict | None
+    error: dict | None
+    retryable: bool
+
+
+class TrainingRunPage(Page):
+    items: list[TrainingRunOut]
+
+
+class EligibilityOut(Api):
+    workspace_id: uuid.UUID
+    eligible: bool
+    checks: dict
+    rules: dict | None
+    stores_in_model: list[str]
+    latest_run: TrainingRunOut | None

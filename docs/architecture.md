@@ -23,12 +23,13 @@ app/
 ├── deps.py            current_user, workspace/store access rules
 ├── errors.py          ApiError and the single error shape
 ├── ml_client.py       httpx client for the ML service (X-Internal-Token)
-├── routers/           auth, workspaces (and stores), products (history, readiness), models_api, forecasts, imports
+├── routers/           auth, workspaces (and stores), products (history, readiness), models_api, forecasts, imports, training
 ├── services/
 │   ├── history.py     history loading, known prices, readiness rules
 │   ├── models_info.py ML model list (cached 60 s), the leakage rule, as-of ranges
 │   ├── forecasting.py request validation, job claiming, the ML call, storing results, retries, actuals
-│   └── imports.py     CSV reading, mapping suggestions, validation, zero-fill, spikes, merge, delete, demand classes
+│   ├── imports.py     CSV reading, mapping suggestions, validation, zero-fill, spikes, merge, delete, demand classes
+│   └── training.py    own-data eligibility (cached), training runs, ML job submission and polling, weekly retrain
 ├── worker.py          python -m app.worker
 ├── seed.py            Load the Reference workspace from `mlengine export-reference`
 └── cli.py             seed-reference, create-user
@@ -52,6 +53,7 @@ migrations/            Alembic
 | `imports` | store, status, file content (until imported), columns, detected, mapping, missing_days_are_zero, summary, result | One CSV upload; `(store, user, idempotency_key)` is unique |
 | `import_rows` | PK (import, store, sku, date), units, price, source_rows, zero_filled | Validated, normalised staging rows; removed after confirm |
 | `import_issues` | import, severity, code, row_number, column, message | Up to 5,000 per import |
+| `training_runs` | workspace, status, outcome, trigger, ml_job_id, history_versions, model_version, result | One own-data training job; at most one active per workspace |
 
 ## Forecast job lifecycle
 
@@ -90,6 +92,17 @@ migrations/            Alembic
 3. **Confirm.** One transaction, holding the affected store rows locked: insert new products; `REPLACE` deletes the overlapping days; insert with `ON CONFLICT DO NOTHING` (that is how `SKIP` works); update first sale and price dates and the store range; bump `history_version`. Then attach late actuals and refresh demand classes through `/internal/v1/demand-class`. That last step is best effort: if the ML service is down, the import still succeeds.
 4. **Delete** removes `sales_daily` rows with that `import_id`.
 
+## Own-data training
+
+1. **Request.** `POST …/models/train` checks eligibility (ML `/eligibility`, cached by the stores' `history_version`). It then locks the workspace row and creates a `QUEUED` run, unless one is already active.
+2. **Submit.** The worker (forecasts first) sends the workspace's history to ML `/train`: all stores, the last 730 days, recorded days only, so gaps stay gaps. The run becomes `TRAINING` with the ML job ID, and the history versions sent are recorded.
+3. **Poll.** About every 5 s the worker checks ML `/train/{jobId}`:
+   - `COMPLETED` → the run is `COMPLETED`, with outcome `TRAINED`, `GATE_FAILED` or `NOT_ELIGIBLE`, and the model cache is cleared.
+   - `JOB_NOT_FOUND` (the ML service restarted; its jobs live in memory) → resubmit, up to 3 attempts.
+   - More than 30 minutes → `TRAINING_TIMEOUT`.
+4. **Serve.** Stores already point at `own-<workspaceId>`, so once the ML registry has a version, capabilities and forecasts use it. The leakage rule still applies: a model trained to day L serves as-of dates ≥ L.
+5. **Retrain.** Hourly maintenance queues a `SCHEDULED` run for workspaces whose latest run is more than 7 days old, that have a trained model, and whose history changed since.
+
 ## Security
 
 - Passwords: Argon2id. An unknown email is checked against a dummy hash, so response timing doesn't reveal which emails have accounts.
@@ -105,5 +118,5 @@ migrations/            Alembic
 | --- | --- | --- |
 | 1 | Auth, workspaces/stores/products, demo seeding, history, readiness, capabilities, model card, forecast jobs + worker, history list, CSV export | **Done** (26 tests; checked end to end against the real ML service) |
 | 2 | CSV imports: upload (`Idempotency-Key`), column mapping with suggestions, the "no row means zero sales?" answer, validation report, confirm/merge with overlap policy, delete batch; demand-class refresh and late actuals after import; `history_version` bump | **Done** (40 tests in total; checked end to end in Docker against the real ML service) |
-| 3 | Own-data training: eligibility via `/internal/v1/eligibility`, `POST /v1/stores/{sid}/models/train` → ML `/train` job, polling, gate result on the model screen, weekly retrain | Next |
-| 4 | Team invitations, research export, rate limiting, password reset | Later |
+| 3 | Own-data training: eligibility via `/internal/v1/eligibility`, `POST /v1/stores/{sid}/models/train` → ML `/train` job, polling, gate result on the model screen, weekly retrain | **Done** (47 tests in total; checked end to end in Docker: the sample shop trains in 23 s and passes the gate) |
+| 4 | Team invitations, research export, rate limiting, password reset | Next |

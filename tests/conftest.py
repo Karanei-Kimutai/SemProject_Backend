@@ -45,15 +45,57 @@ class FakeMl:
         self.fail_with: int | None = None  # HTTP status to return for /forecast
         self.ai_reason: str | None = None
         self.demand_class_calls = 0
+        self.own_models: list[dict] = []
+        self.train_requests: list[dict] = []
+        self.train_jobs: dict[str, dict] = {}
+        self.train_outcome = "TRAINED"
 
     def models(self) -> list[dict]:
         return [{"id": "m5-ca1-foods", "version": v, "status": "ACTIVE", "featureSchema": "m5-v1",
                  "trainingEndDate": end, "capabilities": CAPS, "createdAt": "2026-11-07T00:00:00Z"}
-                for v, end in VERSIONS]
+                for v, end in VERSIONS] + self.own_models
 
-    def resolve(self, as_of: dt.date) -> dict:
-        eligible = [m for m in self.models() if dt.date.fromisoformat(m["trainingEndDate"]) <= as_of]
+    def resolve(self, model_id: str, as_of: dt.date) -> dict:
+        eligible = [m for m in self.models() if m["id"] == model_id
+                    and dt.date.fromisoformat(m["trainingEndDate"]) <= as_of]
         return eligible[-1]
+
+    def eligibility(self, history: list[dict]) -> dict:
+        days = sorted({r["date"] for r in history})
+        per_product: dict = {}
+        for r in history:
+            per_product.setdefault((r["storeId"], r["productId"]), []).append(r["date"])
+        span = (dt.date.fromisoformat(days[-1]) - dt.date.fromisoformat(days[0])).days + 1
+        products = sum((dt.date.fromisoformat(days[-1]) - dt.date.fromisoformat(min(d))).days + 1 >= 21
+                       for d in per_product.values())
+        checks = {"productsWithEnoughHistory": {"value": products, "required": 10},
+                  "storeHistoryDays": {"value": span, "required": 120},
+                  "observedProductDays": {"value": len(history), "required": 4500}}
+        for c in checks.values():
+            c["passed"] = c["value"] >= c["required"]
+        return {"eligible": all(c["passed"] for c in checks.values()), "checks": checks, "rules": {}}
+
+    def train(self, body: dict) -> httpx.Response:
+        self.train_requests.append(body)
+        job_id = f"train_{len(self.train_requests)}"
+        model_id = f"own-{body['workspaceId']}"
+        end = max(r["date"] for r in body["history"])
+        result = {"status": self.train_outcome, "eligibility": self.eligibility(body["history"]),
+                  "backtest": {"window": {"startDate": end, "endDate": end},
+                               "ai": {"n": 28, "mae": 1.3, "rmse": 2.5, "wape": 0.57},
+                               "naive_last_value": {"n": 28, "mae": 1.57, "rmse": 3.06, "wape": 0.68}},
+                  "gate": {"passed": self.train_outcome == "TRAINED", "rule": "AI RMSE and MAE both below naive"}}
+        if self.train_outcome == "TRAINED":
+            version = f"{sum(m['id'] == model_id for m in self.own_models) + 1}.0.0"
+            self.own_models.append({"id": model_id, "version": version, "status": "ACTIVE",
+                                    "featureSchema": "portable-v1", "trainingEndDate": end,
+                                    "capabilities": {**CAPS, "calendarEndDate": None}, "createdAt": end})
+            result.update(model={"id": model_id, "version": version}, horizons=[1, 7], recursive={
+                "validated": True, "byDay": [{"day": 1, "ai": {"rmse": 2.4, "mae": 1.3},
+                                              "naive_last_value": {"rmse": 3.0, "mae": 1.6}}]})
+        self.train_jobs[job_id] = {"jobId": job_id, "workspaceId": body["workspaceId"], "status": "COMPLETED",
+                                   "result": result}
+        return httpx.Response(202, json={"jobId": job_id, "status": "QUEUED"})
 
     def forecast(self, body: dict) -> httpx.Response:
         self.requests.append(body)
@@ -65,9 +107,10 @@ class FakeMl:
             return httpx.Response(200, json=json.loads((FIXTURES / "replay_response.json").read_text()))
         model = None
         if body["includeAi"]:
-            model = self.resolve(as_of)
+            model = self.resolve(body["model"]["id"], as_of)
             if "version" in body["model"]:
-                model = next(m for m in self.models() if m["version"] == body["model"]["version"])
+                model = next(m for m in self.models() if m["id"] == body["model"]["id"]
+                             and m["version"] == body["model"]["version"])
                 if dt.date.fromisoformat(model["trainingEndDate"]) > as_of:
                     return httpx.Response(422, json={"error": {"code": "NO_MODEL_FOR_AS_OF", "message": "no"}})
         days = [as_of + dt.timedelta(days=k + 1) for k in range(body["horizonDays"])]
@@ -107,6 +150,15 @@ class FakeMl:
                  "observedDays": len(x["history"]), "saleDays": len(x["history"])} for x in series]})
         if path == "/forecast":
             return self.forecast(json.loads(request.content))
+        if path == "/eligibility":
+            return httpx.Response(200, json=self.eligibility(json.loads(request.content)["history"]))
+        if path == "/train":
+            return self.train(json.loads(request.content))
+        if path.startswith("/train/"):
+            job = self.train_jobs.get(path.removeprefix("/train/"))
+            if job is None:
+                return httpx.Response(404, json={"error": {"code": "JOB_NOT_FOUND", "message": "gone"}})
+            return httpx.Response(200, json=job)
         return httpx.Response(404, json={"error": {"code": "NOT_FOUND", "message": path}})
 
 

@@ -9,6 +9,8 @@ import httpx
 
 from app.config import get_settings
 
+LONG_TIMEOUT = 120.0  # large training/eligibility payloads
+
 
 class MlServiceError(Exception):
     def __init__(self, code: str, message: str, status: int | None = None, details: dict | None = None):
@@ -63,6 +65,15 @@ class MlClient:
 
     def forecast(self, body: dict, request_id: str | None = None) -> dict:
         return self._call("POST", "/forecast", request_id, json=body)
+
+    def eligibility(self, history: list[dict]) -> dict:
+        return self._call("POST", "/eligibility", json={"history": history}, timeout=LONG_TIMEOUT)
+
+    def train(self, body: dict) -> dict:
+        return self._call("POST", "/train", json=body, timeout=LONG_TIMEOUT)
+
+    def train_status(self, job_id: str) -> dict:
+        return self._call("GET", f"/train/{job_id}")
 
     def demand_class(self, series: list[dict]) -> list[dict]:
         return self._call("POST", "/demand-class", json={"series": series})["series"]

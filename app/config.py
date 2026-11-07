@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     chart_history_days: int = 28
     import_max_bytes: int = 10 * 1024 * 1024
     import_max_rows: int = 500_000
+    training_history_days: int = 730
+    training_ml_timeout_seconds: float = 120.0
+    training_poll_seconds: float = 5.0
+    training_max_minutes: int = 30
+    retrain_after_days: int = 7
 
 
 @lru_cache

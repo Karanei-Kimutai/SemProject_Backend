@@ -287,3 +287,41 @@ class ImportIssue(Base):
     column: Mapped[str | None] = mapped_column(String(120))
     value: Mapped[str | None] = mapped_column(String(200))
     message: Mapped[str] = mapped_column(Text)
+
+
+class TrainingStatus(str, enum.Enum):
+    QUEUED = "QUEUED"
+    TRAINING = "TRAINING"  # submitted to the ML service; the worker polls it
+    COMPLETED = "COMPLETED"  # see outcome
+    FAILED = "FAILED"
+
+
+class TrainingRun(Base):
+    """One own-data training job for a workspace (spec §9.4). The model is shared by the workspace's stores."""
+
+    __tablename__ = "training_runs"
+    __table_args__ = (Index("ix_training_runs_status", "status", "created_at"),
+                      Index("ix_training_runs_workspace", "workspace_id", "created_at"))
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    store_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("stores.id", ondelete="SET NULL"))
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    trigger: Mapped[str] = mapped_column(String(20), default="MANUAL")  # MANUAL or SCHEDULED
+    status: Mapped[TrainingStatus] = mapped_column(_enum(TrainingStatus), default=TrainingStatus.QUEUED)
+    outcome: Mapped[str | None] = mapped_column(String(20))  # TRAINED, GATE_FAILED, NOT_ELIGIBLE
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    ml_job_id: Mapped[str | None] = mapped_column(String(80))
+    country: Mapped[str | None] = mapped_column(String(2))
+    subdivision: Mapped[str | None] = mapped_column(String(10))
+    history_versions: Mapped[dict | None] = mapped_column(JSONB)  # {store_id: history_version} sent
+    history_rows: Mapped[int | None] = mapped_column(Integer)
+    model_id: Mapped[str | None] = mapped_column(String(80))
+    model_version: Mapped[str | None] = mapped_column(String(40))
+    result: Mapped[dict | None] = mapped_column(JSONB)
+    error_code: Mapped[str | None] = mapped_column(String(60))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    submitted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    polled_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))

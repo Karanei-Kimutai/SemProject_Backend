@@ -290,6 +290,78 @@ Afterwards, refresh readiness and capabilities. If the import isn't `READY` or `
 
 Validation and confirmation run within the request, so a 10 MB file takes a few seconds. There are no separate "Validating" or "Importing" states to poll for: show a progress indicator while the request runs.
 
+## Own-data AI models (training)
+
+A business workspace gets its own AI model, trained on its own uploaded sales. The demo model can't be used on other products.
+- **One model per workspace.** It learns from all of the workspace's stores; each store and product is its own series. Public holidays come from the requesting store's country and subdivision.
+- **Every training run ends in one of three outcomes:**
+
+| `outcome` | Meaning | What to show |
+| --- | --- | --- |
+| `TRAINED` | The AI beat "Same as last day" on **both** RMSE and MAE over the last 28 days | "AI forecasts are now available", with the backtest |
+| `GATE_FAILED` | It didn't beat the baseline. Nothing changes; an earlier model, if any, stays active | Say so plainly, with the numbers. Baselines remain. This is a valid research result |
+| `NOT_ELIGIBLE` | Not enough history | Progress toward eligibility |
+
+### Eligibility: `GET /v1/stores/{sid}/models/eligibility`
+
+```json
+{"workspaceId": "…", "eligible": false, "storesInModel": ["NBO-1"],
+ "checks": {"productsWithEnoughHistory": {"value": 30, "required": 10, "passed": true},
+            "storeHistoryDays": {"value": 60, "required": 120, "passed": false},
+            "observedProductDays": {"value": 1800, "required": 4500, "passed": false}},
+ "rules": {…}, "latestRun": null}
+```
+
+Use it for the dashboard's progress line ("60 of 120 days"). The result is cached until the history changes. Viewers can read it. On the demo store, every training endpoint returns `409 REFERENCE_MODEL_FIXED`.
+
+### Train: `POST /v1/stores/{sid}/models/train`
+
+- Owners and managers only, with no body.
+- Returns `202` with a training run, or `200` with the run already in progress (only one runs at a time per workspace).
+- Returns `422 NOT_ELIGIBLE` with `details.checks` if the workspace isn't eligible.
+
+Poll `GET /v1/training-runs/{runId}` every 2–3 s. `status` moves `QUEUED → TRAINING → COMPLETED | FAILED`. Training takes about 20–30 s for 100 products × 1 year.
+
+```json
+{"id": "…", "workspaceId": "…", "status": "COMPLETED", "outcome": "TRAINED", "trigger": "MANUAL",
+ "createdAt": "…", "submittedAt": "…", "finishedAt": "…", "historyRows": 35095,
+ "model": {"id": "own-<workspaceId>", "version": "1.0.0"}, "horizons": [1, 7],
+ "eligibility": {…},
+ "backtest": {"window": {"startDate": "2026-10-10", "endDate": "2026-11-06"}, "oneStepAhead": true,
+              "ai": {"n": 2800, "mae": 1.312, "rmse": 2.503, "wape": 0.573},
+              "naive_last_value": {"n": 2800, "mae": 1.566, "rmse": 3.062, "wape": 0.684},
+              "seasonal_naive_7": {…}},
+ "gate": {"passed": true, "rule": "AI RMSE and MAE both below naive_last_value"},
+ "horizonAccuracy": {"validated": true, "byDay": [{"day": 1, "aiRmse": 2.43, "aiMae": …, "naiveRmse": 2.96, "naiveMae": …}]},
+ "error": null, "retryable": false}
+```
+
+The numbers are real, from the sample shop.
+
+- `horizons` is `[1, 7]` only if 7-day forecasts also beat both baselines; otherwise `[1]`.
+- `FAILED` means something went wrong, not a bad model. `error.code` is one of `ML_SERVICE_UNAVAILABLE`, `TRAINING_LOST`, `TRAINING_TIMEOUT` or `TRAINING_FAILED`. If `retryable` is true, offer `POST /v1/training-runs/{runId}/retry`.
+- `GET /v1/stores/{sid}/models/training-runs?page=` lists the history of runs, newest first.
+
+### After training
+
+- **Capabilities:** `GET /v1/stores/{sid}/models/capabilities` returns `aiAvailable: true`, `methods: ["AI", "BASELINE", "COMPARE"]`, the model's `horizons`, `activeModel: {id: "own-…", version}`, and `training: {runId, status, outcome, finishedAt}`.
+- **When AI isn't available yet,** `aiUnavailableReason` is `NOT_TRAINED`, `TRAINING`, `GATE_FAILED` or `NOT_ELIGIBLE`. These map to the dashboard's "Not yet eligible / Training / Baselines only".
+- **Model card:** `GET /v1/stores/{sid}/models/active` returns the model card. It has the workspace's own backtest and per-day accuracy.
+- **Forecasts:** they work exactly as in the demo. Own-data forecasts have no `productBacktest`; the workspace-level backtest is on the model card. `priceAssumption` is usually `LAST_KNOWN`, because businesses don't upload future prices.
+- **Retraining:** the backend retrains automatically each week if new sales were imported since the last training (`trigger: "SCHEDULED"`).
+
+## Sample data for demos
+
+You don't need real business data. `python -m mlengine export-samples`, run in the ML engine repo, writes three CSVs cut from a real Walmart store that the demo model never saw (M5 TX_1), with dates shifted so the history ends yesterday. `data/processed/samples/README.md` lists the wizard answers for each file.
+
+| File | Use it to demo | Expected |
+| --- | --- | --- |
+| `sample_shop_eligible.csv` | Import → train → AI forecasts | Needs Attention (real spikes), then `TRAINED` with horizons `[1, 7]` |
+| `sample_shop_small.csv` | Progress to eligibility, baseline-only forecasts | `NOT_ELIGIBLE`: 60 of 120 days |
+| `sample_shop_messy.csv` | The validation report | 5 rejected rows (one each of five error types), plus warnings |
+
+Create the store with country `US`, subdivision `TX`, currency `USD` and timezone `America/Chicago`.
+
 ## Not yet available
 
-Own-data training (`/v1/stores/{sid}/models/train`), team invitations and the research export are planned for slices 3 and 4. Until then, a business store gets baseline forecasts only (`capabilities.methods == ["BASELINE"]`).
+Team invitations, the research export, rate limiting and password reset are planned for slice 4.

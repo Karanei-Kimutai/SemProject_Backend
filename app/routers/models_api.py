@@ -13,7 +13,7 @@ from app.errors import ApiError
 from app.ml_client import MlServiceError, get_ml_client
 from app.models import User
 from app.schemas import AsOfRange, CapabilitiesOut, ModelRef
-from app.services import models_info
+from app.services import models_info, training
 
 router = APIRouter(prefix="/v1/stores/{store_id}/models", tags=["models"])
 
@@ -21,12 +21,23 @@ router = APIRouter(prefix="/v1/stores/{store_id}/models", tags=["models"])
 @router.get("/capabilities", response_model=CapabilitiesOut, response_model_by_alias=True)
 def capabilities(store_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)) -> CapabilitiesOut:
     store, access = store_access(db, user, store_id)
+    run = None if access.is_reference else training.latest_run(db, store.workspace_id)
     versions = models_info.versions_for(store.model_id)
+    if run is not None and run.model_version and run.model_version not in {v["version"] for v in versions}:
+        models_info.clear_cache()  # a model finished training after the cache was filled
+        versions = models_info.versions_for(store.model_id)
     latest = versions[-1] if versions else None
     caps = latest["capabilities"] if latest else {}
     reason = None
     if latest is None:
-        reason = "NOT_TRAINED" if not access.is_reference else "MODEL_MISSING"
+        if access.is_reference:
+            reason = "MODEL_MISSING"
+        elif run is not None and run.status.value in ("QUEUED", "TRAINING"):
+            reason = "TRAINING"
+        elif run is not None and run.outcome in ("GATE_FAILED", "NOT_ELIGIBLE"):
+            reason = run.outcome
+        else:
+            reason = "NOT_TRAINED"
     elif store.history_end is None:
         reason = "NO_HISTORY"
     bounds = models_info.as_of_range(store, versions)
@@ -40,7 +51,9 @@ def capabilities(store_id: uuid.UUID, user: User = Depends(current_user), db: Se
         min_history_days=caps.get("minHistoryDays", 21),
         max_missing_days_in_lookback=caps.get("maxMissingDaysInLookback", 3),
         prediction_intervals=False, baselines=models_info.baseline_labels(),
-        active_model=ModelRef(id=latest["id"], version=latest["version"]) if latest else None)
+        active_model=ModelRef(id=latest["id"], version=latest["version"]) if latest else None,
+        training=({"runId": run.id, "status": run.status.value, "outcome": run.outcome,
+                   "finishedAt": run.finished_at} if run else None))
 
 
 @router.get("/active")
