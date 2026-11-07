@@ -46,7 +46,7 @@ def _copy(db: Session, table: str, columns: list[str], rows, chunk: int = 50_000
 
 def seed_reference(db: Session, source: Path) -> dict:
     source = Path(source)
-    meta = json.loads((source / "store.json").read_text())
+    meta = json.loads((source / "store.json").read_text(encoding="utf-8"))
     workspace = db.scalar(select(Workspace).where(Workspace.is_reference))
     if workspace is None:
         workspace = Workspace(name=REFERENCE_NAME, is_reference=True)
