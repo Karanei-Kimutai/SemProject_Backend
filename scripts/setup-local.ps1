@@ -17,6 +17,11 @@
       5. Loads the demo store (about 7 minutes, first run only).
       6. Creates your research user (you type the password).
       7. Adds a CLAUDE.md to the app project if it has none.
+      8. Points the Android app at the API: fills in local.properties (sdk.dir, api.baseUrl) when
+         they are missing, and runs `adb reverse` for a phone connected over USB.
+
+    The raw M5 CSVs are not in Git. Download them from Kaggle (see SETUP.md in the app project)
+    into SemProject_MLEngine\data\raw before the first run.
 
 .EXAMPLE
     cd SemProject_Backend
@@ -124,7 +129,7 @@ if (-not (Test-Command { docker compose version })) { Fail "Docker Compose v2 is
 Ok "Docker is running"
 
 if (-not (Test-Path (Join-Path $ML "mlengine"))) {
-    Fail "$ML has no mlengine folder. Clone SemProject_MLEngine next to SemProject_Backend (branch model-implementation until it's merged)."
+    Fail "$ML has no mlengine folder. Clone SemProject_MLEngine (main branch) next to SemProject_Backend."
 }
 $branch = ((& git -C $ML branch --show-current) | Out-String).Trim()
 Ok "ML engine found (branch $branch)"
@@ -133,9 +138,11 @@ if (Test-Path $App) { Ok "App project found: $App" } else { Note "App project no
 $rawFiles = @("calendar.csv", "sales_train_evaluation.csv", "sell_prices.csv")
 $hasRaw = -not ($rawFiles | Where-Object { -not (Test-Path (Join-Path $Raw $_)) })
 $hasReference = Test-Path (Join-Path $Reference "store.json")
-if ($hasRaw) { Ok "Raw M5 data found" } else { Note "Raw M5 data missing in $Raw (copy data\raw from WSL to refresh the exports)." }
+$kaggle = "https://www.kaggle.com/competitions/m5-forecasting-accuracy/data"
+if ($hasRaw) { Ok "Raw M5 data found" } else { Note "Raw M5 data missing in $Raw, so the demo export and sample shops can't be refreshed." }
 if (-not $hasRaw -and -not $hasReference) {
-    Fail "Neither the raw M5 data ($Raw) nor the demo export ($Reference) exists. Copy SemProject_MLEngine\data from WSL (\\wsl$\<distro>\home\<you>\SemProject_MLEngine\data) and re-run."
+    Fail ("The M5 data isn't there yet. Download calendar.csv, sales_train_evaluation.csv and sell_prices.csv from $kaggle " +
+        "(sign in and accept the competition rules), put them in $Raw, and re-run.")
 }
 
 $Python = $null
@@ -286,6 +293,65 @@ if (Test-Path $App) {
     }
 }
 
+# ---- 8. Android app: local.properties and a USB phone -----------------------------------------
+
+if (Test-Path $App) {
+    Step "Android app connection"
+    $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA "Android\Sdk" }
+    $adb = (Get-Command adb -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    if (-not $adb -and (Test-Path (Join-Path $sdk "platform-tools\adb.exe"))) { $adb = Join-Path $sdk "platform-tools\adb.exe" }
+
+    # Physical phones (not emulators) connected over USB and authorised.
+    $phones = @()
+    if ($adb) {
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $phones = @(& $adb devices 2> $null | Select-Object -Skip 1 |
+                Where-Object { $_ -match "^\S+\s+device$" -and $_ -notmatch "^emulator-" } |
+                ForEach-Object { ($_ -split "\s+")[0] })
+        }
+        finally { $ErrorActionPreference = $previous }
+    }
+
+    # local.properties is git-ignored and per machine. Only missing values are added.
+    $localProps = Join-Path $App "local.properties"
+    $props = if (Test-Path $localProps) { [System.IO.File]::ReadAllText($localProps) } else { "" }
+    $original = $props
+    if ($props -notmatch "(?m)^\s*sdk\.dir\s*=" -and -not $env:ANDROID_HOME) {
+        if (Test-Path $sdk) {
+            # Properties files escape backslashes and colons.
+            $props = Set-EnvLine $props "sdk.dir" (($sdk -replace '\\', '\\') -replace ':', '\:')
+            Ok "Set sdk.dir to $sdk"
+        } else {
+            Note "Android SDK not found at $sdk. Install Android Studio, open the app project once, then re-run."
+        }
+    }
+    if ($props -notmatch "(?m)^\s*api\.baseUrl\s*=") {
+        # A USB phone reaches the PC's API through `adb reverse`; the emulator reaches it at 10.0.2.2.
+        $url = if ($phones.Count -gt 0) { "http://localhost:$ApiPort" } else { "http://10.0.2.2:$ApiPort" }
+        $props = Set-EnvLine $props "api.baseUrl" $url
+        Ok "Set api.baseUrl to $url"
+    }
+    if ($props -ne $original) {
+        [System.IO.File]::WriteAllText($localProps, ($props.TrimStart() -replace "`r`n", "`n"), (New-Object System.Text.UTF8Encoding $false))
+    }
+    $baseUrl = (([regex]::Match($props, "(?m)^\s*api\.baseUrl\s*=\s*(\S+)")).Groups[1].Value)
+    Ok "The app will call $baseUrl"
+
+    if ($baseUrl -match "localhost|127\.0\.0\.1") {
+        if ($phones.Count -eq 0) {
+            Note "No USB phone connected. After plugging one in, run: adb reverse tcp:$ApiPort tcp:$ApiPort"
+        }
+        foreach ($phone in $phones) {
+            Invoke-Checked "adb reverse on $phone" $adb @("-s", $phone, "reverse", "tcp:$ApiPort", "tcp:$ApiPort")
+            Ok "Phone $phone can reach the API (repeat 'adb reverse tcp:$ApiPort tcp:$ApiPort' after every re-plug)"
+        }
+    } elseif ($phones.Count -gt 0) {
+        Note "A USB phone is connected but api.baseUrl is $baseUrl. For a phone, set api.baseUrl=http://localhost:$ApiPort in local.properties."
+    }
+}
+
 # ---- done -----------------------------------------------------------------------------------------
 
 Step "Done"
@@ -294,10 +360,12 @@ Ok "Demo store: $products products"
 Ok "API:      http://localhost:$ApiPort   (docs: http://localhost:$ApiPort/docs)"
 Ok "Emulator: http://10.0.2.2:$ApiPort   (USB phone: adb reverse tcp:${ApiPort} tcp:${ApiPort}, then http://localhost:$ApiPort)"
 Write-Host ""
-Write-Host "Still for you to do:"
-Write-Host "  1. In the emulator's browser, open http://10.0.2.2:$ApiPort/healthz to check the app can reach the API."
-Write-Host "  2. Start Claude in the app project:"
+Write-Host "Still for you to do (details in ..\$AppFolder\SETUP.md):"
+Write-Host "  1. Check the device can reach the API: open http://10.0.2.2:$ApiPort/healthz in the emulator's browser,"
+Write-Host "     or http://localhost:$ApiPort/healthz on a USB phone after adb reverse."
+Write-Host "  2. Build and install the app: open ..\$AppFolder in Android Studio and press Run, or:"
 Write-Host "       cd ..\$AppFolder"
-Write-Host "       claude --add-dir ..\SemProject_MLEngine --add-dir ..\SemProject_Backend"
-Write-Host "  3. Stop the stack when you're done (data is kept):"
+Write-Host "       .\gradlew.bat installDebug"
+Write-Host "  3. Sign in with the research user, or register a normal account in the app."
+Write-Host "  4. Stop the stack when you're done (data is kept):"
 Write-Host "       docker compose -f docker-compose.yml -f docker-compose.dev.yml down"
