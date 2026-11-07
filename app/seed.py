@@ -23,13 +23,24 @@ log = logging.getLogger(__name__)
 REFERENCE_NAME = "Demo data (M5 CA_1 FOODS)"
 
 
-def _copy(db: Session, table: str, columns: list[str], rows) -> int:
+def _copy(db: Session, table: str, columns: list[str], rows, chunk: int = 50_000) -> int:
+    """COPY rows in text format, a chunk at a time (much faster than one write per row)."""
     raw = db.connection().connection  # psycopg connection inside the session's transaction
-    count = 0
+
+    def fmt(value) -> str:
+        return "\\N" if value is None else str(value)
+
+    count, buffer = 0, []
     with raw.cursor() as cursor, cursor.copy(f"COPY {table} ({', '.join(columns)}) FROM STDIN") as copy:
         for row in rows:
-            copy.write_row(row)
-            count += 1
+            buffer.append("\t".join(fmt(v) for v in row))
+            if len(buffer) >= chunk:
+                copy.write("\n".join(buffer) + "\n")
+                count += len(buffer)
+                buffer.clear()
+        if buffer:
+            copy.write("\n".join(buffer) + "\n")
+            count += len(buffer)
     return count
 
 

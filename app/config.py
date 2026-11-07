@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 1.0
     history_days_for_forecast: int = 365
     chart_history_days: int = 28
+    import_max_bytes: int = 10 * 1024 * 1024
+    import_max_rows: int = 500_000
 
 
 @lru_cache

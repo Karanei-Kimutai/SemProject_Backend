@@ -44,6 +44,7 @@ class FakeMl:
         self.requests: list[dict] = []
         self.fail_with: int | None = None  # HTTP status to return for /forecast
         self.ai_reason: str | None = None
+        self.demand_class_calls = 0
 
     def models(self) -> list[dict]:
         return [{"id": "m5-ca1-foods", "version": v, "status": "ACTIVE", "featureSchema": "m5-v1",
@@ -97,6 +98,13 @@ class FakeMl:
             return httpx.Response(200, json={"product": {"productId": request.url.params["productId"], "n": 28,
                                                          "ai": {"mae": 1.0, "rmse": 1.2, "wape": 0.2},
                                                          "naive_last_value": {"mae": 1.5, "rmse": 2.0, "wape": 0.3}}})
+        if path == "/demand-class":
+            series = json.loads(request.content)["series"]
+            self.demand_class_calls += 1
+            return httpx.Response(200, json={"series": [
+                {"productId": x["productId"], "storeId": x["storeId"], "class": "INTERMITTENT",
+                 "label": "Sells on some days", "adi": 1.5, "cv2": 0.3, "zeroShare": 0.4,
+                 "observedDays": len(x["history"]), "saleDays": len(x["history"])} for x in series]})
         if path == "/forecast":
             return self.forecast(json.loads(request.content))
         return httpx.Response(404, json={"error": {"code": "NOT_FOUND", "message": path}})

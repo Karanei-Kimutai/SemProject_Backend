@@ -8,14 +8,15 @@ Android app ──HTTPS──▶ Caddy ──▶ API (FastAPI) ──┬──�
                        worker ─────┘            └──▶ ML service (mlengine, private network only)
 ```
 
-**Status (7 November 2026): slice 1 is done.** The Reference (demo) workspace works end to end:
+**Status (7 November 2026): slices 1 and 2 are done.** Working end to end:
 - sign-in with JWT access tokens and rotating refresh tokens;
 - workspaces, stores and products, with role checks;
 - sales history, data readiness and model capabilities;
 - forecast jobs through a Postgres-backed worker, including demo replays with actual sales and stored backtests;
-- forecast history and CSV export.
+- forecast history and CSV export;
+- CSV sales imports for business stores: upload, column mapping, validation report, merge with skip or replace for overlapping days, and delete.
 
-Not built yet: CSV imports (slice 2) and own-data model training (slice 3). See [`docs/architecture.md`](docs/architecture.md#build-plan).
+Not built yet: own-data model training (slice 3). Business stores get baseline forecasts until then. See [`docs/architecture.md`](docs/architecture.md#build-plan).
 
 ## Stack
 
@@ -34,7 +35,7 @@ pip install -e ".[dev]"
 cp .env.example .env            # then set DATABASE_URL, JWT_SECRET, ML_SERVICE_URL, ML_SERVICE_TOKEN
 alembic upgrade head
 
-# Demo data: export it from the ML engine repo, then load it (~1.5 min, 2.8M rows)
+# Demo data: export it from the ML engine repo, then load it (2.8M rows: ~2 min natively, ~7 min in Docker Desktop)
 (cd ../SemProject_MLEngine && python -m mlengine export-reference)
 python -m app.cli seed-reference ../SemProject_MLEngine/data/processed/reference
 
@@ -52,7 +53,7 @@ createdb forecast_test                                   # once
 TEST_DATABASE_URL=postgresql+psycopg://user@localhost/forecast_test pytest
 ```
 
-There are 26 tests. They run against a real Postgres database and a fake ML service. For the demo replay, the fake ML service returns a response captured from the real one (`tests/fixtures/ml/`). The tests also check that requests sent to the ML service match the captured contract.
+There are 40 tests. They run against a real Postgres database and a fake ML service. For the demo replay, the fake ML service returns a response captured from the real one (`tests/fixtures/ml/`). The tests also check that requests sent to the ML service match the captured contract.
 
 ## Documentation
 

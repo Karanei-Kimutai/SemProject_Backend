@@ -12,7 +12,7 @@ import enum
 import uuid
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, Numeric, String, Text,
+    Boolean, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text,
     UniqueConstraint, func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -217,3 +217,73 @@ class ForecastPoint(Base):
     naive_last_value: Mapped[float | None] = mapped_column(Float)
     seasonal_naive_7: Mapped[float | None] = mapped_column(Float)
     actual: Mapped[float | None] = mapped_column(Float)
+
+
+class ImportStatus(str, enum.Enum):
+    UPLOADED = "UPLOADED"
+    NEEDS_ATTENTION = "NEEDS_ATTENTION"  # validated; some rows rejected, the rest can still be imported
+    READY = "READY"
+    IMPORTED = "IMPORTED"
+    FAILED = "FAILED"  # nothing importable (unreadable file, or every row rejected)
+    DELETED = "DELETED"
+
+
+class SalesImport(Base):
+    """One uploaded CSV file (an import batch). Its rows merge into ``sales_daily`` when confirmed."""
+
+    __tablename__ = "imports"
+    __table_args__ = (UniqueConstraint("store_id", "uploaded_by", "idempotency_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    store_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"), index=True)
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    idempotency_key: Mapped[str | None] = mapped_column(String(100))
+    filename: Mapped[str] = mapped_column(String(255))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    content: Mapped[bytes | None] = mapped_column(LargeBinary)  # dropped once imported or deleted
+    status: Mapped[ImportStatus] = mapped_column(_enum(ImportStatus), default=ImportStatus.UPLOADED)
+    columns: Mapped[list] = mapped_column(JSONB, default=list)
+    detected: Mapped[dict] = mapped_column(JSONB, default=dict)  # delimiter, suggested mapping, date formats
+    mapping: Mapped[dict | None] = mapped_column(JSONB)
+    missing_days_are_zero: Mapped[bool | None] = mapped_column(Boolean)
+    summary: Mapped[dict | None] = mapped_column(JSONB)
+    result: Mapped[dict | None] = mapped_column(JSONB)
+    closed_days: Mapped[list | None] = mapped_column(JSONB)  # [[store_id, date], …]
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    validated_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    imported_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ImportRow(Base):
+    """A validated, normalised row: one product, store and day (duplicates already summed)."""
+
+    __tablename__ = "import_rows"
+
+    import_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("imports.id", ondelete="CASCADE"), primary_key=True)
+    store_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"), primary_key=True)
+    sku: Mapped[str] = mapped_column(String(80), primary_key=True)
+    sale_date: Mapped[dt.date] = mapped_column(Date, primary_key=True)
+    units_sold: Mapped[float] = mapped_column(Numeric(12, 3))
+    unit_price: Mapped[float | None] = mapped_column(Numeric(12, 4))
+    product_name: Mapped[str | None] = mapped_column(String(200))
+    category: Mapped[str | None] = mapped_column(String(120))
+    unit_of_measure: Mapped[str | None] = mapped_column(String(40))
+    first_row: Mapped[int | None] = mapped_column(Integer)  # CSV line number; None for zero-filled days
+    source_rows: Mapped[int] = mapped_column(Integer, default=1)
+    zero_filled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ImportIssue(Base):
+    __tablename__ = "import_issues"
+    __table_args__ = (Index("ix_import_issues_import", "import_id", "severity", "row_number"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    import_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("imports.id", ondelete="CASCADE"))
+    severity: Mapped[str] = mapped_column(String(10))  # ERROR (row rejected) or WARNING (kept, flagged)
+    code: Mapped[str] = mapped_column(String(40))
+    row_number: Mapped[int | None] = mapped_column(Integer)
+    column: Mapped[str | None] = mapped_column(String(120))
+    value: Mapped[str | None] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(Text)

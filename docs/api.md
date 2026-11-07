@@ -166,6 +166,130 @@ The points in this example are real output for FOODS_3_090.
 - `GET /v1/forecasts/{id}/export?format=csv` returns a CSV file.
 - `DELETE /v1/forecasts/{id}` → `204` (soft delete). You can delete your own forecasts; owners and managers can delete any in their workspace.
 
+## Sales imports (CSV)
+
+These follow the import wizard in spec §8.6. Imports are allowed only in your own workspaces, by OWNER and MANAGER (`403` in the demo workspace).
+
+### 1. Upload: `POST /v1/stores/{sid}/imports`
+
+- Multipart field `file`: a UTF-8 CSV of up to 10 MB and 500,000 rows. Comma, semicolon, tab and `|` delimiters are detected.
+- Send an `Idempotency-Key` header, for example a UUID generated per user action. Repeating the same key with the same file returns the same import; the same key with a different file returns `409 IDEMPOTENCY_KEY_REUSED`.
+- The response is `201`, an import with `status: "UPLOADED"`. Nothing reaches the history yet.
+
+```json
+{"id": "…", "storeId": "…", "filename": "sales.csv", "sizeBytes": 2048, "status": "UPLOADED",
+ "columns": ["sales_date", "product_id", "product_name", "category", "units_sold", "unit_price"],
+ "detected": {"delimiter": ",", "preview": [{"sales_date": "2026-10-01", "...": "..."}],
+              "suggestedMapping": {"salesDate": {"column": "sales_date", "confidence": "HIGH"},
+                                   "unitsSold": {"column": "units_sold", "confidence": "HIGH"}},
+              "dateFormats": ["YYYY-MM-DD"], "suggestedDateFormat": "YYYY-MM-DD", "dateFormatAmbiguous": false,
+              "unusedColumns": []},
+ "mapping": null, "missingDaysAreZero": null, "summary": null, "result": null}
+```
+
+- Pre-fill the mapping screen from `suggestedMapping`. Highlight `confidence: "CHECK"` entries for the user to confirm.
+- `unusedColumns` (revenue, promotion, stock, returns) get the label "Saved, not used for forecasting yet".
+- Errors: `EMPTY_FILE`, `FILE_NOT_UTF8`, `NO_HEADER`, `BAD_HEADER` (duplicate or empty column names), `FILE_TOO_LARGE` (413).
+
+### 2. Map and validate: `PUT /v1/imports/{iid}/mapping`
+
+```json
+{"columns": {"salesDate": "sales_date", "productId": "product_id", "productName": "product_name",
+             "unitsSold": "units_sold", "unitPrice": "unit_price", "category": "category"},
+ "dateFormat": "YYYY-MM-DD",
+ "missingDaysAreZero": false}
+```
+
+**Fields** (keys of `columns`):
+
+| Field | Required? | Notes |
+| --- | --- | --- |
+| `salesDate` | yes | |
+| `unitsSold` | yes | |
+| `productId` or `productName` | at least one | With a name only, the SKU is made from the name: "Sugar 1kg" → `SUGAR-1KG` |
+| `storeId` | no | Store **codes** in this workspace, for multi-store files. Rows without one belong to the store in the URL |
+| `unitPrice` | no | |
+| `category` | no | |
+| `unitOfMeasure` | no | |
+| `storeClosed` | no | `true`/`yes`/`1` marks the store-day closed |
+
+**`dateFormat`** is one of `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`, `YYYY/MM/DD`, `DD-MM-YYYY`, `DD.MM.YYYY`. You only need to send it when `dateFormatAmbiguous` is true (for example `01/02/2026`); otherwise you get `DATE_FORMAT_REQUIRED` with `details.options`.
+
+**`missingDaysAreZero`** is the wizard's required question, "If a product has no row for a day, does that mean it sold zero?"
+- `true`: each product's missing days, from its first day in the file to the file's last day, are stored as 0, carrying the last price.
+- `false`: they stay *not recorded*.
+- Closed days are never filled.
+
+**What validation does:**
+- **Rejects these rows** (each becomes an `ERROR` issue): `INVALID_DATE`, `FUTURE_DATE`, `UNKNOWN_STORE`, `MISSING_PRODUCT`, `PRODUCT_ID_TOO_LONG`, `MISSING_UNITS` (units are never worked out from revenue), `INVALID_UNITS`, `NEGATIVE_UNITS`.
+- **Keeps these rows but flags them** (`WARNING`):
+  - `INVALID_PRICE` and `NON_POSITIVE_PRICE`: the price is dropped;
+  - `DUPLICATE_ROWS_SUMMED`: several rows for the same product-day are added together;
+  - `SPIKE`: more than 10× the product's recent median. It is kept unchanged.
+
+The response is the import with `summary` filled in. `status` is:
+- `READY`: no issues;
+- `NEEDS_ATTENTION`: some rows rejected or flagged, but the accepted rows can still be imported;
+- `FAILED`: nothing importable.
+
+You can send a new mapping any time before confirming.
+
+```json
+"summary": {"rowsRead": 642, "rowsAccepted": 642, "rowsRejected": 0, "rowsWithWarnings": 0,
+            "rowsSummedAsDuplicates": 0, "dailyRecords": 719, "zeroFilledDays": 77, "closedDays": 0,
+            "dateRange": {"from": "2026-09-08", "to": "2026-11-06"}, "products": 12, "newProducts": 12,
+            "stores": ["NBO-1"], "overlappingDays": 0, "errorsByCode": {}, "warningsByCode": {},
+            "issuesTruncated": false, "unusedColumns": []}
+```
+
+Other mapping errors: `REQUIRED_FIELDS_UNMAPPED` (`details.fields`), `UNKNOWN_COLUMN`, `COLUMN_MAPPED_TWICE`, `TOO_MANY_ROWS`, `IMPORT_LOCKED` (409, already imported).
+
+### 3. Review
+
+- `GET /v1/imports/{iid}/validation` returns `{importId, status, summary, preview: [{storeId, productId, productName, date, unitsSold, unitPrice, category, sourceRows, zeroFilled}]}`. The preview is the first 20 normalised daily records. `overlappingDays` is recounted against the current history.
+- `GET /v1/imports/{iid}/errors?severity=ERROR|WARNING&page=&pageSize=` returns `{items: [{severity, code, rowNumber, column, value, message}]}`. `rowNumber` is the line in the file, where the header is line 1. Up to 5,000 issues are stored; `summary.issuesTruncated` says whether there were more. The counts in `errorsByCode` are always complete.
+
+### 4. Confirm: `POST /v1/imports/{iid}/confirm {"overlapPolicy": "SKIP" | "REPLACE"}`
+
+`overlapPolicy` decides what happens to days already in the history:
+- `SKIP` (the default) keeps the existing days;
+- `REPLACE` overwrites them with the file's values.
+
+Then the backend:
+1. creates new products, filling in missing categories;
+2. merges the rows;
+3. updates the store's history range;
+4. attaches actual sales to past forecasts;
+5. refreshes demand classes.
+
+It returns the import with `status: "IMPORTED"` and:
+
+```json
+"result": {"overlapPolicy": "SKIP", "recordsInserted": 719, "recordsReplaced": 0, "overlapsSkipped": 0,
+           "productsCreated": 12, "demandClassesUpdated": 12}
+```
+
+Afterwards, refresh readiness and capabilities. If the import isn't `READY` or `NEEDS_ATTENTION`, the response is `409 IMPORT_NOT_READY`.
+
+### Other import endpoints
+
+- `GET /v1/stores/{sid}/imports?status=&page=&pageSize=`: the Data screen's import list, newest first.
+- `GET /v1/imports/{iid}`: one import.
+- `DELETE /v1/imports/{iid}`: an imported batch's rows are removed from the history and `result.recordsDeleted` is set. Days that the batch *replaced* don't come back. Any other import is simply discarded.
+- `GET /v1/stores/{sid}/history/summary`: `{historyStart, historyEnd, productsWithData, daysWithData, records, lastImportAt}` for the Data screen card.
+
+### Status mapping for the Data screen
+
+| API status | Spec label |
+| --- | --- |
+| `UPLOADED` | Uploaded |
+| `NEEDS_ATTENTION` | Needs Attention |
+| `READY` | Ready to Import |
+| `IMPORTED` | Imported |
+| `FAILED` | Failed |
+
+Validation and confirmation run within the request, so a 10 MB file takes a few seconds. There are no separate "Validating" or "Importing" states to poll for: show a progress indicator while the request runs.
+
 ## Not yet available
 
-Imports (`/v1/stores/{sid}/imports…`), own-data training (`/v1/stores/{sid}/models/train`), team invitations, and the research export are planned for slices 2 and 3. Until then, build those screens against mocks.
+Own-data training (`/v1/stores/{sid}/models/train`), team invitations and the research export are planned for slices 3 and 4. Until then, a business store gets baseline forecasts only (`capabilities.methods == ["BASELINE"]`).

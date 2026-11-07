@@ -2,8 +2,8 @@
 # Exposes the API on http://localhost:8000 and Postgres on localhost:5432, without Caddy.
 services:
   db:
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["127.0.0.1:${DB_PORT:-5432}:5432"]
   api:
-    ports: ["127.0.0.1:8000:8000"]
+    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
   caddy:
     profiles: ["prod"]

@@ -23,11 +23,12 @@ app/
 ├── deps.py            current_user, workspace/store access rules
 ├── errors.py          ApiError and the single error shape
 ├── ml_client.py       httpx client for the ML service (X-Internal-Token)
-├── routers/           auth, workspaces (and stores), products (history, readiness), models_api, forecasts
+├── routers/           auth, workspaces (and stores), products (history, readiness), models_api, forecasts, imports
 ├── services/
 │   ├── history.py     history loading, known prices, readiness rules
 │   ├── models_info.py ML model list (cached 60 s), the leakage rule, as-of ranges
-│   └── forecasting.py request validation, job claiming, the ML call, storing results, retries, actuals
+│   ├── forecasting.py request validation, job claiming, the ML call, storing results, retries, actuals
+│   └── imports.py     CSV reading, mapping suggestions, validation, zero-fill, spikes, merge, delete, demand classes
 ├── worker.py          python -m app.worker
 ├── seed.py            Load the Reference workspace from `mlengine export-reference`
 └── cli.py             seed-reference, create-user
@@ -48,6 +49,9 @@ migrations/            Alembic
 | `future_prices` | PK (store, product, date), unit_price | Known prices after the last day of history (demo) |
 | `forecast_runs` | status, method, as_of_date, horizon_days, model_* metadata, run_metrics, product_backtest | The job and the forecast are one row (`jobId == forecastId`) |
 | `forecast_points` | PK (run, date), ai, naive_last_value, seasonal_naive_7, actual | |
+| `imports` | store, status, file content (until imported), columns, detected, mapping, missing_days_are_zero, summary, result | One CSV upload; `(store, user, idempotency_key)` is unique |
+| `import_rows` | PK (import, store, sku, date), units, price, source_rows, zero_filled | Validated, normalised staging rows; removed after confirm |
+| `import_issues` | import, severity, code, row_number, column, message | Up to 5,000 per import |
 
 ## Forecast job lifecycle
 
@@ -79,6 +83,13 @@ migrations/            Alembic
    - **Stuck runs** (in progress for more than 5 minutes, e.g. after a worker crash) are requeued by the hourly maintenance pass.
    - **Late actuals:** the same pass fills in actual sales that arrived after a forecast was made ("Actuals now available").
 
+## Imports
+
+1. **Upload.** Store the file (bytea, ≤ 10 MB), detect the delimiter, suggest a mapping from column-name synonyms, and detect the date format from the sampled values. The format that parses the most values wins, and a tie means the user must choose.
+2. **Mapping.** Parse every row into `import_rows`, one per (store, sku, day), summing duplicates. Apply the zero-vs-missing answer (closed days excluded) and flag spikes against the product's previous 28 recorded values (including history). Write `import_issues` and the summary. This can be repeated until the import is confirmed.
+3. **Confirm.** One transaction, holding the affected store rows locked: insert new products; `REPLACE` deletes the overlapping days; insert with `ON CONFLICT DO NOTHING` (that is how `SKIP` works); update first sale and price dates and the store range; bump `history_version`. Then attach late actuals and refresh demand classes through `/internal/v1/demand-class`. That last step is best effort: if the ML service is down, the import still succeeds.
+4. **Delete** removes `sales_daily` rows with that `import_id`.
+
 ## Security
 
 - Passwords: Argon2id. An unknown email is checked against a dummy hash, so response timing doesn't reveal which emails have accounts.
@@ -93,6 +104,6 @@ migrations/            Alembic
 | Slice | Scope | Status |
 | --- | --- | --- |
 | 1 | Auth, workspaces/stores/products, demo seeding, history, readiness, capabilities, model card, forecast jobs + worker, history list, CSV export | **Done** (26 tests; checked end to end against the real ML service) |
-| 2 | CSV imports: upload (`Idempotency-Key`), column mapping, the "no row means zero sales?" answer, validation report, confirm/merge with overlap policy, delete batch; demand-class refresh after import; `history_version` bump | Next |
-| 3 | Own-data training: eligibility via `/internal/v1/eligibility`, `POST /v1/stores/{sid}/models/train` → ML `/train` job, polling, gate result on the model screen, weekly retrain | After 2 |
+| 2 | CSV imports: upload (`Idempotency-Key`), column mapping with suggestions, the "no row means zero sales?" answer, validation report, confirm/merge with overlap policy, delete batch; demand-class refresh and late actuals after import; `history_version` bump | **Done** (40 tests in total; checked end to end in Docker against the real ML service) |
+| 3 | Own-data training: eligibility via `/internal/v1/eligibility`, `POST /v1/stores/{sid}/models/train` → ML `/train` job, polling, gate result on the model screen, weekly retrain | Next |
 | 4 | Team invitations, research export, rate limiting, password reset | Later |

@@ -33,7 +33,7 @@ docker compose run --rm -v "$PWD/seed-data:/seed:ro" api python -m app.cli seed-
 docker compose run --rm api python -m app.cli create-user you@example.com --research
 ```
 
-Seeding is idempotent: running it again replaces the demo store's data.
+Seeding takes a few minutes (2.8M rows) and is idempotent: running it again replaces the demo store's data.
 
 ## Updates
 

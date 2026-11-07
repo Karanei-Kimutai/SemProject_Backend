@@ -99,7 +99,7 @@ class DemandClassOut(Api):
 
 
 class ProductIn(Api):
-    sku: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
+    sku: str = Field(min_length=1, max_length=80, pattern=r"^\S(.*\S)?$")
     name: str = Field(min_length=1, max_length=200)
     category: str | None = Field(default=None, max_length=120)
     unit_of_measure: str = Field(default="units", max_length=40)
@@ -250,3 +250,60 @@ class ForecastSummary(Api):
 
 class ForecastPage(Page):
     items: list[ForecastSummary]
+
+
+# ---- imports ------------------------------------------------------------------------------
+
+class ImportMappingIn(Api):
+    columns: dict[Literal["salesDate", "productId", "productName", "unitsSold", "storeId", "unitPrice", "category",
+                          "unitOfMeasure", "storeClosed"], str]
+    date_format: str | None = None
+    missing_days_are_zero: bool  # the wizard's required question: "no row means zero sales?"
+
+
+class ImportConfirmIn(Api):
+    overlap_policy: Literal["SKIP", "REPLACE"] = "SKIP"
+
+
+class ImportOut(Api):
+    id: uuid.UUID
+    store_id: uuid.UUID
+    filename: str
+    size_bytes: int
+    status: str
+    created_at: dt.datetime
+    validated_at: dt.datetime | None
+    imported_at: dt.datetime | None
+    columns: list[str]
+    detected: dict
+    mapping: dict | None
+    missing_days_are_zero: bool | None
+    summary: dict | None
+    result: dict | None
+
+
+class ImportPage(Page):
+    items: list[ImportOut]
+
+
+class ImportIssueOut(Api):
+    severity: str
+    code: str
+    row_number: int | None
+    column: str | None
+    value: str | None
+    message: str
+
+
+class ImportIssuePage(Page):
+    items: list[ImportIssueOut]
+
+
+class HistorySummaryOut(Api):
+    store_id: uuid.UUID
+    history_start: dt.date | None
+    history_end: dt.date | None
+    products_with_data: int
+    days_with_data: int
+    records: int
+    last_import_at: dt.datetime | None
