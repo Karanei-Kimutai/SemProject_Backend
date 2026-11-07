@@ -35,6 +35,21 @@ class Settings(BaseSettings):
     training_max_minutes: int = 30
     retrain_after_days: int = 7
 
+    # Email: "console" logs messages (development), "smtp" sends them, "memory" keeps them (tests).
+    email_backend: str = "console"
+    email_from: str = "Demand Forecasting <no-reply@example.com>"
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_starttls: bool = True
+    app_name: str = "Retail Demand Forecasting"
+
+    invitation_days: int = 14
+    password_reset_minutes: int = 30
+    password_reset_max_attempts: int = 5
+    rate_limit_enabled: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

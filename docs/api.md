@@ -33,6 +33,9 @@ Every error has the same shape. Map `code` to your own localised message, and fa
 | `MODEL_NOT_FOUND` | 404 | Research only: unknown version |
 | `ML_SERVICE_UNAVAILABLE` | 503 | Forecasting service is down. Retry later |
 | `NOT_RETRYABLE` | 409 | Retry on a job that hasn't failed |
+| `RATE_LIMITED` | 429 | Too many attempts; wait `Retry-After` seconds |
+| `INVALID_RESET_CODE` | 400 | Password reset code wrong, used or expired |
+| `LAST_OWNER`, `ALREADY_MEMBER`, `INVITATION_NOT_PENDING` | 409 | Team management (see Team) |
 
 ## Authentication
 
@@ -362,6 +365,62 @@ You don't need real business data. `python -m mlengine export-samples`, run in t
 
 Create the store with country `US`, subdivision `TX`, currency `USD` and timezone `America/Chicago`.
 
+## Account: password reset and change
+
+| Endpoint | Notes |
+| --- | --- |
+| `POST /v1/auth/password-reset/request {email}` | Always `202 {"status": "SENT_IF_ACCOUNT_EXISTS"}`, so nobody can test which emails have accounts. If the account exists, an **8-digit code** is emailed. It works once, for 30 minutes, and only the newest code works |
+| `POST /v1/auth/password-reset/confirm {email, code, newPassword}` | Returns new tokens and signs the user out everywhere else. A wrong or expired code returns `400 INVALID_RESET_CODE`. After 5 wrong attempts the code stops working, even the right one: ask for a new one |
+| `POST /v1/auth/change-password {currentPassword, newPassword}` | Signed in. Returns new tokens; other sessions are signed out. A wrong current password returns `401 INVALID_CREDENTIALS` |
+
+The app flow is: "Forgot password?" → enter email → "If an account exists, we've emailed a code" → enter code and new password → signed in.
+
+### Rate limits
+
+Too many attempts return `429 RATE_LIMITED` with a `Retry-After` header (seconds) and `details.retryAfterSeconds`. Show "Too many attempts. Try again in N seconds."
+
+| Endpoint | Limit |
+| --- | --- |
+| login | 5 per minute per email, 20 per minute per IP |
+| register | 5 per hour per IP |
+| refresh | 60 per minute per IP |
+| password-reset request | 3 per hour per email, 5 per hour per IP |
+| password-reset confirm | 10 per 10 minutes per IP |
+
+## Team (spec §8.12)
+
+Only **owners** manage the team. Any member can see the member list and leave. The demo workspace has no team (`403`).
+
+| Endpoint | Notes |
+| --- | --- |
+| `GET /v1/workspaces/{wid}/members` | `[{userId, email, displayName, role, joinedAt}]` |
+| `PATCH /v1/workspaces/{wid}/members/{userId} {role}` | Owners only. `role` is `OWNER`, `MANAGER` or `VIEWER` |
+| `DELETE /v1/workspaces/{wid}/members/{userId}` | Owners remove anyone; anyone can remove themselves (leave) |
+| `POST /v1/workspaces/{wid}/invitations {email, role}` | Owners only, `201`. Emails a notification, and a new invitation replaces a pending one to the same address. `409 ALREADY_MEMBER` if they're already in the workspace |
+| `GET /v1/workspaces/{wid}/invitations` | Pending invitations (owners), for the "pending invitations" list |
+| `DELETE /v1/workspaces/{wid}/invitations/{iid}` | Revoke |
+| `GET /v1/me/invitations` | Invitations to the signed-in user's email: `[{id, workspaceId, workspaceName, email, role, status, invitedBy, createdAt, expiresAt}]` |
+| `POST /v1/invitations/{iid}/accept` / `decline` | Only the invited email's user can respond. `409 INVITATION_NOT_PENDING` if it was revoked, already answered, or expired (after 14 days) |
+
+**Accepting doesn't use email links.** The invited person signs in, or registers with the invited email, and the app shows `GET /v1/me/invitations`. Check it after sign-in, and show a badge in Settings → Invitations. After accepting, reload `GET /v1/me`.
+
+**Last owner:** removing or demoting a workspace's last owner returns `409 LAST_OWNER`.
+
+## Research (research users only)
+
+Both endpoints return `403` for other users. They include completed forecasts the user can see: in the demo workspace, their own runs; in their own workspaces, everyone's.
+
+- **`GET /v1/research/summary?storeId=&from=&to=`** compares AI and the baselines on every forecast day whose actual sales are known. That means replays, and past forecasts once actuals were imported. Only days where all three methods and the actual exist are counted, so the comparison is like for like. Filter with `from` and `to` (as-of date).
+
+  ```json
+  {"storeId": "…", "runs": 2,
+   "overall": {"n": 8, "ai": {"mae": …, "rmse": …, "wape": …}, "naive_last_value": {…}, "seasonal_naive_7": {…}},
+   "byDemandClass": {"SMOOTH": {…}}, "byDayAhead": {"1": {…}, "7": {…}},
+   "note": "Lower error means better on these days, not that it will be better tomorrow."}
+  ```
+
+- **`GET /v1/research/export?storeId=&from=&to=`** returns a CSV, one row per forecast day. The columns are `forecast_id, store, sku, demand_class, as_of_date, is_replay, method, model_id, model_version, feature_schema, horizon_days, day_ahead, date, ai, naive_last_value, seasonal_naive_7, actual, ai_abs_error, naive_abs_error, seasonal_abs_error, price_assumption, created_at`.
+
 ## Not yet available
 
-Team invitations, the research export, rate limiting and password reset are planned for slice 4.
+Nothing from the design spec's backend list is outstanding. Later ideas: XLSX imports, PDF export, and push notifications when training finishes.

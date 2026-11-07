@@ -19,6 +19,10 @@ curl https://$API_DOMAIN/healthz
 
 Open only ports 22, 80 and 443 in the firewall. Postgres and the ML service publish no ports.
 
+## Email
+
+Password reset codes and invitation notices are sent by email. With `EMAIL_BACKEND=console` (the default), they only appear in `docker compose logs api`: fine for a demo, but users can't reset passwords themselves. For real email, set `EMAIL_BACKEND=smtp` and the `SMTP_*` variables in `.env` (any SMTP provider works; Brevo and Gmail app passwords both have free tiers), then run `docker compose up -d`. A mail outage never fails a request; failures are logged.
+
 ## Load the demo workspace
 
 The demo data comes from the ML engine's export (about 100 MB, which needs the raw M5 CSVs). Produce it on your machine and copy it to the server:

@@ -17,12 +17,14 @@ os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
 os.environ["JWT_SECRET"] = "test-secret-that-is-at-least-32-characters"
 os.environ["RUN_WORKER_IN_PROCESS"] = "false"
 os.environ["ML_SERVICE_URL"] = "http://ml.test"
+os.environ["EMAIL_BACKEND"] = "memory"
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
+from app import email, ratelimit  # noqa: E402
 from app.db import Base, get_engine, get_sessionmaker  # noqa: E402
 from app.main import app  # noqa: E402
 from app.ml_client import MlClient, set_ml_client  # noqa: E402
@@ -177,6 +179,8 @@ def clean(schema):
         tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
         connection.execute(text(f"TRUNCATE {tables} CASCADE"))
     models_info.clear_cache()
+    ratelimit.reset()
+    email.outbox.clear()
     yield
 
 

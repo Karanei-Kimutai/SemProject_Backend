@@ -23,13 +23,16 @@ app/
 ├── deps.py            current_user, workspace/store access rules
 ├── errors.py          ApiError and the single error shape
 ├── ml_client.py       httpx client for the ML service (X-Internal-Token)
-├── routers/           auth, workspaces (and stores), products (history, readiness), models_api, forecasts, imports, training
+├── routers/           auth (incl. password reset), workspaces (and stores), team, products (history, readiness),
+│                      models_api, forecasts, imports, training, research
 ├── services/
 │   ├── history.py     history loading, known prices, readiness rules
 │   ├── models_info.py ML model list (cached 60 s), the leakage rule, as-of ranges
 │   ├── forecasting.py request validation, job claiming, the ML call, storing results, retries, actuals
 │   ├── imports.py     CSV reading, mapping suggestions, validation, zero-fill, spikes, merge, delete, demand classes
 │   └── training.py    own-data eligibility (cached), training runs, ML job submission and polling, weekly retrain
+├── email.py           console / smtp / memory email backends
+├── ratelimit.py       fixed-window limits for the auth endpoints
 ├── worker.py          python -m app.worker
 ├── seed.py            Load the Reference workspace from `mlengine export-reference`
 └── cli.py             seed-reference, create-user
@@ -53,6 +56,8 @@ migrations/            Alembic
 | `imports` | store, status, file content (until imported), columns, detected, mapping, missing_days_are_zero, summary, result | One CSV upload; `(store, user, idempotency_key)` is unique |
 | `import_rows` | PK (import, store, sku, date), units, price, source_rows, zero_filled | Validated, normalised staging rows; removed after confirm |
 | `import_issues` | import, severity, code, row_number, column, message | Up to 5,000 per import |
+| `invitations` | workspace, email, role, status, expires_at | Accepted in-app by the matching signed-in user |
+| `password_resets` | user, code_hash, attempts, expires_at, used_at | Single-use reset codes |
 | `training_runs` | workspace, status, outcome, trigger, ml_job_id, history_versions, model_version, result | One own-data training job; at most one active per workspace |
 
 ## Forecast job lifecycle
@@ -110,7 +115,11 @@ migrations/            Alembic
 - Refresh tokens: random 48 bytes; only the SHA-256 is stored; rotated on every use; reuse revokes every session for that user.
 - Authorisation: every store, product and forecast lookup goes through `deps.store_access`. Resources the user can't see return `404`, not `403`, so their existence isn't revealed. Demo-workspace forecasts are private to the user who made them.
 - The ML service is reachable only on the internal Docker network and requires `X-Internal-Token`.
-- Still to add before a public launch: rate limiting on `/v1/auth/*` (at Caddy or with a middleware), email verification and password reset.
+- Rate limits on the sign-in endpoints (`app/ratelimit.py`) are in memory, which is right for the single API process in Docker Compose. With several API processes, move the counters to Postgres or Redis.
+- Password reset: 8-digit single-use codes, stored as SHA-256 (with the user ID), valid for 30 minutes, at most 5 attempts. Requesting one never reveals whether the account exists. A reset or password change revokes every refresh token.
+- Invitations are accepted inside the app by the signed-in user whose email matches, so there are no bearer links to leak.
+- Email (`app/email.py`) is best effort, so a mail outage never fails a request. The `console` backend logs messages (development), and `smtp` sends them.
+- Not done: email verification on sign-up. Anyone can register any address, but being invited still requires signing in with that exact address.
 
 ## Build plan
 
@@ -119,4 +128,4 @@ migrations/            Alembic
 | 1 | Auth, workspaces/stores/products, demo seeding, history, readiness, capabilities, model card, forecast jobs + worker, history list, CSV export | **Done** (26 tests; checked end to end against the real ML service) |
 | 2 | CSV imports: upload (`Idempotency-Key`), column mapping with suggestions, the "no row means zero sales?" answer, validation report, confirm/merge with overlap policy, delete batch; demand-class refresh and late actuals after import; `history_version` bump | **Done** (40 tests in total; checked end to end in Docker against the real ML service) |
 | 3 | Own-data training: eligibility via `/internal/v1/eligibility`, `POST /v1/stores/{sid}/models/train` → ML `/train` job, polling, gate result on the model screen, weekly retrain | **Done** (47 tests in total; checked end to end in Docker: the sample shop trains in 23 s and passes the gate) |
-| 4 | Team invitations, research export, rate limiting, password reset | Next |
+| 4 | Team invitations and member management, research summary and export, rate limiting, password reset and change, email (console/SMTP) | **Done** (56 tests in total) |

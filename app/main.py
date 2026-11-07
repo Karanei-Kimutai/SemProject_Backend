@@ -11,7 +11,7 @@ from sqlalchemy import text
 from app import __version__
 from app.db import get_engine
 from app.errors import install_error_handlers
-from app.routers import auth, forecasts, imports, models_api, products, training, workspaces
+from app.routers import auth, forecasts, imports, models_api, products, research, team, training, workspaces
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -37,5 +37,5 @@ def health() -> dict:
 
 
 for router in (auth.router, workspaces.router, products.router, models_api.router, forecasts.router,
-               imports.router, training.router):
+               imports.router, training.router, team.router, research.router):
     app.include_router(router)
