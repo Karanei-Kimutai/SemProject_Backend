@@ -1,0 +1,58 @@
+# Production-style stack on one server: Caddy (HTTPS) → API → ML service, plus a worker and Postgres.
+# Only Caddy publishes ports. Postgres and the ML service are reachable only on the internal network.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: forecast
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: forecast
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forecast"]
+      interval: 5s
+      retries: 10
+
+  ml:
+    build: ${MLENGINE_PATH:-../SemProject_MLEngine}
+    restart: unless-stopped
+    environment:
+      ML_SERVICE_TOKEN: ${ML_SERVICE_TOKEN:?set ML_SERVICE_TOKEN in .env}
+      MODEL_REGISTRY_PATH: /app/models
+    volumes:
+      - models:/app/models  # first start copies the image's committed models; own-data models persist here
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db: {condition: service_healthy}
+      ml: {condition: service_started}
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    depends_on:
+      db: {condition: service_healthy}
+      api: {condition: service_started}  # the api container runs the migrations
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  models:
+  caddy_data:

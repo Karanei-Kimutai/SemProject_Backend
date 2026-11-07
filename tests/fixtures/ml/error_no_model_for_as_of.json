@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "NO_MODEL_FOR_AS_OF",
+    "message": "m5-ca1-foods@1.1.0 was trained on data up to 2016-05-22, after the as-of date 2016-05-08.",
+    "details": {},
+    "requestId": null
+  }
+}

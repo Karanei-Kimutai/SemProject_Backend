@@ -1,0 +1,50 @@
+{
+  "requestId": "demo-replay",
+  "asOfDate": "2016-05-08",
+  "horizon": {
+    "startDate": "2016-05-09",
+    "endDate": "2016-05-09",
+    "days": 1,
+    "validated": true
+  },
+  "model": {
+    "id": "m5-ca1-foods",
+    "version": "1.1.0-bt",
+    "featureSchema": "m5-v1",
+    "trainingEndDate": "2016-04-24"
+  },
+  "mlengineVersion": "0.1.0",
+  "baselineLabels": {
+    "naive_last_value": "Same as last day",
+    "seasonal_naive_7": "Same day last week"
+  },
+  "series": [
+    {
+      "productId": "FOODS_3_090",
+      "storeId": "CA_1",
+      "points": [
+        {
+          "date": "2016-05-09",
+          "ai": 57.1206,
+          "baselines": {
+            "naive_last_value": 77.0,
+            "seasonal_naive_7": 59.0
+          }
+        }
+      ],
+      "aiUnavailableReason": null,
+      "missingDaysInLookback": 0,
+      "priceAssumption": "KNOWN",
+      "demandClass": {
+        "class": "INSUFFICIENT_DATA",
+        "label": "Not enough history to classify",
+        "adi": null,
+        "cv2": null,
+        "zeroShare": 0.0,
+        "observedDays": 28,
+        "saleDays": 28
+      },
+      "warnings": []
+    }
+  ]
+}

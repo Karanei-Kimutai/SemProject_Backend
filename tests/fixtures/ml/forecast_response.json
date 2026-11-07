@@ -1,0 +1,98 @@
+{
+  "requestId": "demo-1",
+  "asOfDate": "2016-05-22",
+  "horizon": {
+    "startDate": "2016-05-23",
+    "endDate": "2016-05-29",
+    "days": 7,
+    "validated": true
+  },
+  "model": {
+    "id": "m5-ca1-foods",
+    "version": "1.1.0",
+    "featureSchema": "m5-v1",
+    "trainingEndDate": "2016-05-22"
+  },
+  "mlengineVersion": "0.1.0",
+  "baselineLabels": {
+    "naive_last_value": "Same as last day",
+    "seasonal_naive_7": "Same day last week"
+  },
+  "series": [
+    {
+      "productId": "FOODS_3_090",
+      "storeId": "CA_1",
+      "points": [
+        {
+          "date": "2016-05-23",
+          "ai": 48.1623,
+          "baselines": {
+            "naive_last_value": 64.0,
+            "seasonal_naive_7": 38.0
+          }
+        },
+        {
+          "date": "2016-05-24",
+          "ai": 44.5093,
+          "baselines": {
+            "naive_last_value": 64.0,
+            "seasonal_naive_7": 42.0
+          }
+        },
+        {
+          "date": "2016-05-25",
+          "ai": 46.8461,
+          "baselines": {
+            "naive_last_value": 64.0,
+            "seasonal_naive_7": 39.0
+          }
+        },
+        {
+          "date": "2016-05-26",
+          "ai": 47.7036,
+          "baselines": {
+            "naive_last_value": 64.0,
+            "seasonal_naive_7": 51.0
+          }
+        },
+        {
+          "date": "2016-05-27",
+          "ai": 62.2248,
+          "baselines": {
+            "naive_last_value": 64.0,
+            "seasonal_naive_7": 69.0
+          }
+        },
+        {
+          "date": "2016-05-28",
+          "ai": 74.0785,
+          "baselines": {
+            "naive_last_value": 64.0,
+            "seasonal_naive_7": 67.0
+          }
+        },
+        {
+          "date": "2016-05-29",
+          "ai": 75.5692,
+          "baselines": {
+            "naive_last_value": 64.0,
+            "seasonal_naive_7": 64.0
+          }
+        }
+      ],
+      "aiUnavailableReason": null,
+      "missingDaysInLookback": 0,
+      "priceAssumption": "KNOWN",
+      "demandClass": {
+        "class": "INSUFFICIENT_DATA",
+        "label": "Not enough history to classify",
+        "adi": null,
+        "cv2": null,
+        "zeroShare": 0.0,
+        "observedDays": 28,
+        "saleDays": 28
+      },
+      "warnings": []
+    }
+  ]
+}

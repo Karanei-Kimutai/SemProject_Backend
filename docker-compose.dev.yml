@@ -1,0 +1,9 @@
+# Local development: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up`
+# Exposes the API on http://localhost:8000 and Postgres on localhost:5432, without Caddy.
+services:
+  db:
+    ports: ["127.0.0.1:5432:5432"]
+  api:
+    ports: ["127.0.0.1:8000:8000"]
+  caddy:
+    profiles: ["prod"]
