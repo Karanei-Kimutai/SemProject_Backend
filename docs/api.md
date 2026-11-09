@@ -4,6 +4,7 @@
 - Interactive docs: `/docs`. Contract: [`openapi.json`](openapi.json). Generate the Retrofit/Kotlin client from it rather than writing it by hand.
 - JSON fields are camelCase. Dates are `YYYY-MM-DD` in the store's timezone. Timestamps are ISO 8601 UTC. IDs are UUIDs.
 - Send `X-Request-Id` if you have one. Every response echoes it, or a generated ID.
+- Health check: `GET /healthz` (no sign-in) returns `{"status": "ok", "version"}` once the API can reach its database. Use it to check a device can reach the API.
 
 ## Errors
 

@@ -24,11 +24,12 @@ app/
 ├── errors.py          ApiError and the single error shape
 ├── ml_client.py       httpx client for the ML service (X-Internal-Token)
 ├── routers/           auth (incl. password reset), workspaces (and stores), team, products (history, readiness),
-│                      models_api, forecasts, imports, training, research
+│                      models_api, forecasts, batches, imports, training, research
 ├── services/
 │   ├── history.py     history loading, known prices, readiness rules
 │   ├── models_info.py ML model list (cached 60 s), the leakage rule, as-of ranges
 │   ├── forecasting.py request validation, job claiming, the ML call, storing results, retries, actuals
+│   ├── batches.py     store-wide forecasts: choosing products, one run per product, progress, retry
 │   ├── imports.py     CSV reading, mapping suggestions, validation, zero-fill, spikes, merge, delete, demand classes
 │   └── training.py    own-data eligibility (cached), training runs, ML job submission and polling, weekly retrain
 ├── email.py           console / smtp / memory email backends
@@ -51,7 +52,8 @@ migrations/            Alembic
 | `products` | sku (sent to ML as `productId`), category, first_price_date, demand_* | Demand class cached from the last forecast |
 | `sales_daily` | PK (store, product, date), units_sold, unit_price, import_id | **A missing row means the day wasn't recorded, never zero** |
 | `future_prices` | PK (store, product, date), unit_price | Known prices after the last day of history (demo) |
-| `forecast_runs` | status, method, as_of_date, horizon_days, model_* metadata, run_metrics, product_backtest | The job and the forecast are one row (`jobId == forecastId`) |
+| `forecast_runs` | status, method, as_of_date, horizon_days, model_* metadata, run_metrics, product_backtest, batch_id | The job and the forecast are one row (`jobId == forecastId`). `batch_id` is set for runs created by a store-wide batch |
+| `forecast_batches` | store, requested_by, method, as_of_date, horizon_days, history_version, product_count | Groups one run per product; progress is counted from the runs' states |
 | `forecast_points` | PK (run, date), ai, naive_last_value, seasonal_naive_7, actual | |
 | `imports` | store, status, file content (until imported), columns, detected, mapping, missing_days_are_zero, summary, result | One CSV upload; `(store, user, idempotency_key)` is unique |
 | `import_rows` | PK (import, store, sku, date), units, price, source_rows, zero_filled | Validated, normalised staging rows; removed after confirm |
@@ -89,6 +91,14 @@ migrations/            Alembic
    - **Request-level ML errors** fail straight away.
    - **Stuck runs** (in progress for more than 5 minutes, e.g. after a worker crash) are requeued by the hourly maintenance pass.
    - **Late actuals:** the same pass fills in actual sales that arrived after a forecast was made ("Actuals now available").
+
+## Store-wide forecasts (batches)
+
+1. `POST /v1/stores/{sid}/forecast-batches` runs the same checks as a single forecast, once for the store, then picks every active product with sales history (or the `productIds` given; at most 2,000).
+2. The method follows the store: `COMPARE` when it has a registered model, otherwise `BASELINE`. The as-of date is the last day of history.
+3. One `forecast_batches` row and one ordinary `QUEUED` run per product are created in one transaction. If the same user already has an unfinished batch for this store and length, that batch is returned instead.
+4. The worker claims single forecasts before batch runs, so someone waiting on one product isn't stuck behind a whole store. Batch runs skip the demo store's per-product backtest (opening the product fetches it).
+5. Progress, items and retry are read from the runs. Each run is an ordinary forecast, so retries, stuck-run recovery and the per-forecast endpoints work unchanged. `history_version` lets the app say "new sales were added after this forecast".
 
 ## Imports
 
@@ -129,3 +139,4 @@ migrations/            Alembic
 | 2 | CSV imports: upload (`Idempotency-Key`), column mapping with suggestions, the "no row means zero sales?" answer, validation report, confirm/merge with overlap policy, delete batch; demand-class refresh and late actuals after import; `history_version` bump | **Done** (40 tests in total; checked end to end in Docker against the real ML service) |
 | 3 | Own-data training: eligibility via `/internal/v1/eligibility`, `POST /v1/stores/{sid}/models/train` → ML `/train` job, polling, gate result on the model screen, weekly retrain | **Done** (47 tests in total; checked end to end in Docker: the sample shop trains in 23 s and passes the gate) |
 | 4 | Team invitations and member management, research summary and export, rate limiting, password reset and change, email (console/SMTP) | **Done** (56 tests in total) |
+| 5 | Store-wide forecasts for the business version of the app: `forecast_batches` (migration `0005`), create, progress, items, retry, latest; single forecasts claimed first; `GET /v1/forecasts?batch=` | **Done** (67 tests in total; approved by the project owner and merged into `main`) |
