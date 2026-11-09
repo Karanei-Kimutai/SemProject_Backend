@@ -154,7 +154,7 @@ If it fails, `error` is `{code, message}`. Offer **Retry** only when `retryable`
 
 The points in this example are real output for FOODS_3_090.
 
-- `points[].baseline` is the main baseline ("Same as last day"); `seasonalNaive` is the second one.
+- `points[].baseline` is the main baseline ("Same as last day", `naive_last_value`), which the app calls the **simple forecast**: every forecast day gets the units from the product's most recent recorded day up to the as-of date (a recorded 0 counts; unrecorded days are skipped). `seasonalNaive` is the second one: each day gets the units from the same weekday in the 7 days before the forecast starts, or `null` if that day wasn't recorded. Both are computed for every run, need no model, and have no minimum history beyond one recorded day in the 365 days sent.
 - `ai` is `null` when `method` is `BASELINE` or `aiUnavailableReason` is set.
 - `actual` is non-null only on replays, or once actual sales arrive later.
 - `history` holds the last 28 days before the as-of date, for the chart.
