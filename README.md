@@ -66,12 +66,13 @@ createdb forecast_test                                   # once
 TEST_DATABASE_URL=postgresql+psycopg://user@localhost/forecast_test pytest
 ```
 
-There are 56 tests. They run against a real Postgres database and a fake ML service. For the demo replay, the fake ML service returns a response captured from the real one (`tests/fixtures/ml/`). The tests also check that requests sent to the ML service match the captured contract.
+There are 67 tests. They run against a real Postgres database and a fake ML service. For the demo replay, the fake ML service returns a response captured from the real one (`tests/fixtures/ml/`). The tests also check that requests sent to the ML service match the captured contract.
 
 ## Documentation
 
 | Document | What it covers |
 | --- | --- |
+| [`docs/how-the-backend-works.md`](docs/how-the-backend-works.md) | **Start here if you are new:** what a forecasting backend usually does, how this one does each part, and walkthroughs of uploading sales, forecasting every product and training a shop's model |
 | [`docs/api.md`](docs/api.md) | Guide to the public API for the Android app: auth flow, every endpoint, error codes, polling |
 | [`docs/openapi.json`](docs/openapi.json) | Machine-readable contract for generating the app's network client (`python scripts/export_openapi.py`; a test keeps it current) |
 | [`docs/architecture.md`](docs/architecture.md) | Design: modules, data model, forecast job lifecycle, security, build plan |
