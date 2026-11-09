@@ -10,14 +10,17 @@
         <parent>\VolatileDemandForecastingMobileApplication
 
     It does the following, skipping anything already done, so it is safe to re-run:
-      1. Checks Docker, Git, Python and the folders.
+      1. Checks Docker, Git, Python and the folders, and repairs model files that Git checked out
+         with Windows line endings (LightGBM can't read them).
       2. Creates SemProject_Backend\.env with local settings and random secrets (an existing one is kept).
-      3. Creates the ML engine's Python environment and exports the demo data and sample shops.
-      4. Builds and starts the stack (db, ml, api, worker) and waits for it.
-      5. Loads the demo store (about 7 minutes, first run only).
-      6. Creates your research user (you type the password).
-      7. Adds a CLAUDE.md to the app project if it has none.
-      8. Points the Android app at the API: fills in local.properties (sdk.dir, api.baseUrl) when
+      3. Creates the ML engine's Python environment (with its test tools) and exports the demo data
+         and the sample shop CSVs.
+      4. Builds and starts the stack (db, ml, api, worker), waits for it, and checks the ML service
+         can load every model.
+      5. Loads the demo store, "the sample shop" in the app (about 7 minutes, first run only).
+      6. Optionally creates a research user (you type the password). Only the app's research branch
+         uses it; the business app on main works with any account you register in the app.
+      7. Points the Android app at the API: fills in local.properties (sdk.dir, api.baseUrl) when
          they are missing, and runs `adb reverse` for a phone connected over USB.
 
     The raw M5 CSVs are not in Git. Download them from Kaggle (see SETUP.md in the app project)
@@ -25,11 +28,16 @@
 
 .EXAMPLE
     cd SemProject_Backend
+    powershell -ExecutionPolicy Bypass -File .\scripts\setup-local.ps1
+
+.EXAMPLE
+    # Also create a research user for the app's research branch, without being asked.
     powershell -ExecutionPolicy Bypass -File .\scripts\setup-local.ps1 -ResearchEmail you@example.com
 #>
 [CmdletBinding()]
 param(
-    # Email for the research user. If left out, the script asks (leave the answer blank to skip).
+    # Email for an optional research user (research branch only). If left out, the script asks;
+    # a blank answer skips it.
     [string]$ResearchEmail,
     # Folder name of the Android project, next to SemProject_Backend.
     [string]$AppFolder = "VolatileDemandForecastingMobileApplication",
@@ -133,7 +141,20 @@ if (-not (Test-Path (Join-Path $ML "mlengine"))) {
 }
 $branch = ((& git -C $ML branch --show-current) | Out-String).Trim()
 Ok "ML engine found (branch $branch)"
-if (Test-Path $App) { Ok "App project found: $App" } else { Note "App project not found at $App (the CLAUDE.md step will be skipped)." }
+if (Test-Path $App) { Ok "App project found: $App" } else { Note "App project not found at $App (the Android connection step will be skipped)." }
+
+# Git for Windows (core.autocrlf=true) checks text files out with CRLF line endings. LightGBM can't
+# parse a model.txt with CRLF, and the ml image copies these files. The ML engine's .gitattributes
+# prevents this in new clones; older checkouts are repaired here (Git still sees them as unchanged).
+$crlfModels = 0
+foreach ($model in Get-ChildItem -Path (Join-Path $ML "models") -Recurse -Filter "model.txt" -ErrorAction SilentlyContinue) {
+    $text = [System.IO.File]::ReadAllText($model.FullName)
+    if ($text.Contains("`r`n")) {
+        [System.IO.File]::WriteAllText($model.FullName, ($text -replace "`r`n", "`n"), (New-Object System.Text.UTF8Encoding $false))
+        $crlfModels++
+    }
+}
+if ($crlfModels -gt 0) { Note "Converted $crlfModels model file(s) to Unix line endings so LightGBM can read them." }
 
 $rawFiles = @("calendar.csv", "sales_train_evaluation.csv", "sell_prices.csv")
 $hasRaw = -not ($rawFiles | Where-Object { -not (Test-Path (Join-Path $Raw $_)) })
@@ -192,10 +213,10 @@ if ($Python) {
         $rest = @($Python | Select-Object -Skip 1)
         Invoke-Checked "Creating the Python environment" $exe ($rest + @("-m", "venv", (Join-Path $ML ".venv")))
     }
-    if (-not (Test-Command { & $venvPython -c "import mlengine, lightgbm, sklearn" })) {
-        Write-Host "    Installing the ML engine package (a few minutes the first time)..."
+    if (-not (Test-Command { & $venvPython -c "import mlengine, lightgbm, sklearn, fastapi, pytest" })) {
+        Write-Host "    Installing the ML engine package and its test tools (a few minutes the first time)..."
         Invoke-Checked "Upgrading pip" $venvPython @("-m", "pip", "install", "--quiet", "--upgrade", "pip")
-        Invoke-Checked "Installing mlengine" $venvPython @("-m", "pip", "install", "--quiet", "-e", $ML)
+        Invoke-Checked "Installing mlengine" $venvPython @("-m", "pip", "install", "--quiet", "-e", "$ML[service,dev]")
     }
     Ok "Python environment ready"
     Push-Location $ML
@@ -239,9 +260,35 @@ finally { Pop-Location }
 if ($mlStatus -eq "200") { Ok "ML service is reachable from the API" }
 else { Fail "The API can't reach the ML service (got '$mlStatus'). Check: docker compose -f docker-compose.yml -f docker-compose.dev.yml logs ml" }
 
+# The models volume is filled from the image only on its first start, so an image built from a CRLF
+# checkout leaves unreadable models in it. Repair them in place, then check every model loads.
+$modelCheck = @"
+import pathlib, lightgbm
+fixed = 0
+for path in pathlib.Path('/app/models').glob('*/*/model.txt'):
+    data = path.read_bytes()
+    if b'\r\n' in data:
+        path.write_bytes(data.replace(b'\r\n', b'\n'))
+        fixed += 1
+    lightgbm.Booster(model_file=str(path))
+print('fixed', fixed)
+"@
+Push-Location $Backend
+try { $modelStatus = ($modelCheck | & docker @ComposeFiles exec -T ml python - 2> $null | Out-String).Trim() }
+finally { Pop-Location }
+if ($modelStatus -match "fixed (\d+)$") {
+    if ([int]$Matches[1] -gt 0) {
+        Invoke-Compose "Restarting the ML service" @("restart", "ml")
+        Note "Repaired $($Matches[1]) model file(s) in the models volume (Windows line endings) and restarted the ML service."
+    }
+    Ok "The ML service can load every model"
+} else {
+    Fail "The ML service can't load its models. Check: docker compose -f docker-compose.yml -f docker-compose.dev.yml logs ml"
+}
+
 # ---- 5. demo store ----------------------------------------------------------------------------
 
-Step "Demo store"
+Step "Demo store (the sample shop in the app)"
 $seeded = Get-SqlValue "select exists(select 1 from sales_daily s join stores st on st.id = s.store_id join workspaces w on w.id = st.workspace_id where w.is_reference)"
 if ($seeded -eq "t" -and -not $ReseedDemo) {
     Ok "Already loaded (use -ReseedDemo to load it again)"
@@ -253,9 +300,11 @@ if ($seeded -eq "t" -and -not $ReseedDemo) {
 
 # ---- 6. research user -------------------------------------------------------------------------
 
-Step "Research user"
+Step "Research user (optional)"
 if (-not $PSBoundParameters.ContainsKey("ResearchEmail")) {
-    $ResearchEmail = Read-Host "    Email for your research user (leave blank to skip)"
+    Write-Host "    Only the app's research branch uses a research user. For the business app (main), skip this"
+    Write-Host "    and register an account in the app."
+    $ResearchEmail = Read-Host "    Email for a research user (leave blank to skip)"
 }
 $ResearchEmail = "$ResearchEmail".Trim().ToLower()
 if (-not $ResearchEmail) {
@@ -269,31 +318,7 @@ if (-not $ResearchEmail) {
     Invoke-Compose "Creating the research user" @("run", "--rm", "api", "python", "-m", "app.cli", "create-user", $ResearchEmail, "--research")
 }
 
-# ---- 7. CLAUDE.md in the app project ------------------------------------------------------------
-
-if (Test-Path $App) {
-    Step "Claude instructions in the app project"
-    $claudeMd = Join-Path $App "CLAUDE.md"
-    if (Test-Path $claudeMd) {
-        Ok "CLAUDE.md already exists (left unchanged)"
-        if (-not (Select-String -Path $claudeMd -Pattern "Co-Authored-By" -Quiet)) {
-            Note "It doesn't mention the no Co-Authored-By rule; consider adding it."
-        }
-    } else {
-        $content = @"
-# Project instructions
-
-- Read ../SemProject_MLEngine/MOBILE_APP_HANDOFF.md before starting work. Then read the design spec it links to and ../SemProject_Backend/docs/api.md.
-- Never add Co-Authored-By trailers or "Generated with Claude Code" lines to commits or pull requests.
-- Do not modify ../SemProject_Backend or ../SemProject_MLEngine. Raise any API contract problems with the project owner.
-- The backend runs locally in Docker at http://localhost:$ApiPort (from the emulator: http://10.0.2.2:$ApiPort). Emails such as password reset codes appear in ``docker compose logs api``, run in ../SemProject_Backend.
-"@
-        [System.IO.File]::WriteAllText($claudeMd, ($content -replace "`r`n", "`n"), (New-Object System.Text.UTF8Encoding $false))
-        Ok "Created CLAUDE.md (not committed; review it and commit it yourself)"
-    }
-}
-
-# ---- 8. Android app: local.properties and a USB phone -----------------------------------------
+# ---- 7. Android app: local.properties and a USB phone -----------------------------------------
 
 if (Test-Path $App) {
     Step "Android app connection"
@@ -356,7 +381,7 @@ if (Test-Path $App) {
 
 Step "Done"
 $products = Get-SqlValue "select count(*) from products p join workspaces w on w.id = p.workspace_id where w.is_reference"
-Ok "Demo store: $products products"
+Ok "Demo store (the sample shop): $products products"
 Ok "API:      http://localhost:$ApiPort   (docs: http://localhost:$ApiPort/docs)"
 Ok "Emulator: http://10.0.2.2:$ApiPort   (USB phone: adb reverse tcp:${ApiPort} tcp:${ApiPort}, then http://localhost:$ApiPort)"
 Write-Host ""
@@ -366,6 +391,10 @@ Write-Host "     or http://localhost:$ApiPort/healthz on a USB phone after adb r
 Write-Host "  2. Build and install the app: open ..\$AppFolder in Android Studio and press Run, or:"
 Write-Host "       cd ..\$AppFolder"
 Write-Host "       .\gradlew.bat installDebug"
-Write-Host "  3. Sign in with the research user, or register a normal account in the app."
-Write-Host "  4. Stop the stack when you're done (data is kept):"
+Write-Host "  3. In the app: go through the short intro tour, then Create an account (business app, main branch)."
+Write-Host "     Research branch only: sign in with the research user instead."
+Write-Host "  4. Create a shop, then Data -> Upload sales data -> Use the sample sales file. Then Forecasts -> Forecast"
+Write-Host "     all products, and menu -> AI model -> Train AI model. The sample shop (Walmart data) is in"
+Write-Host "     Your shops, for exploring without uploading anything."
+Write-Host "  5. Stop the stack when you're done (data is kept):"
 Write-Host "       docker compose -f docker-compose.yml -f docker-compose.dev.yml down"
