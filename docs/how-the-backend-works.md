@@ -212,6 +212,12 @@ The import pipeline (`app/services/imports.py`, walked through in section 4):
   - `COMPARE`: both, which is what the business app uses.
 
   The baselines are always computed, even when the AI can't run for a product.
+- **The simple forecast, exactly.** The app calls the main baseline (`naive_last_value`, stored in `forecast_points.naive_last_value` and returned as `points[].baseline`) the **simple forecast**. It takes the units the product sold on its most recent **recorded** day up to the as-of date, which for a business store is its latest day of history, and repeats that number on every forecast day. Example: milk sold 12 on its last recorded day, so the 7-day simple forecast is 12 on each day, 84 in total.
+  - A recorded zero counts (and carries over: the forecast is then 0). Days with no row, such as days the shop was closed, are skipped.
+  - The backend sends the last 365 days of the product's history (`history_days_for_forecast`). With no recorded day in them, the run fails with `INSUFFICIENT_HISTORY`. Otherwise there is no minimum: the 21-day readiness rule applies only to the AI.
+  - `BASELINE` runs allow 1 or 7 days. A store without a registered model always gets `BASELINE` batches; that covers a new store, a store not yet trained, and one whose training ended `GATE_FAILED`.
+  - The ML service does the calculation (`mlengine/models/baselines.py`); the backend only stores and returns it. The app shows it whenever it doesn't use the AI, and for any product the AI can't forecast.
+  - The second baseline, `seasonal_naive_7` ("Same day last week", `points[].seasonalNaive`), gives each forecast day the units from the same weekday in the 7 days before the forecast starts. The app shows it only in comparisons.
 - **Capabilities:** `GET /v1/stores/{sid}/models/capabilities` tells the app what this store can do right now:
   - available methods and lengths (1 or 7 days);
   - whether AI is available, and if not, why (`NOT_TRAINED`, `TRAINING`, `NOT_ELIGIBLE`, `GATE_FAILED`, `NO_HISTORY`, `MODEL_MISSING`);
