@@ -134,6 +134,7 @@ def get_forecast(forecast_id: uuid.UUID, user: User = Depends(current_user), db:
 @router.get("/forecasts", response_model=ForecastPage, response_model_by_alias=True)
 def list_forecasts(store_id: uuid.UUID = Query(alias="storeId"), product_id: uuid.UUID | None = Query(None, alias="productId"),
                    replay: bool | None = None, status: str | None = None,
+                   batch: bool | None = Query(None, description="true: only runs from batches; false: only single forecasts"),
                    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
                    user: User = Depends(current_user), db: Session = Depends(get_db)) -> ForecastPage:
     store, access = store_access(db, user, store_id)
@@ -147,6 +148,8 @@ def list_forecasts(store_id: uuid.UUID = Query(alias="storeId"), product_id: uui
         query = query.where(ForecastRun.is_replay == replay)
     if status:
         query = query.where(ForecastRun.status == RunStatus(status.upper()))
+    if batch is not None:
+        query = query.where(ForecastRun.batch_id.is_not(None) if batch else ForecastRun.batch_id.is_(None))
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     rows = db.execute(query.order_by(ForecastRun.created_at.desc()).offset((page - 1) * page_size).limit(page_size))
     items = [ForecastSummary(

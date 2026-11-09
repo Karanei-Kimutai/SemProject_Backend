@@ -32,7 +32,8 @@ Every error has the same shape. Map `code` to your own localised message, and fa
 | `NO_MODEL_FOR_AS_OF` | 422 | Research only: the chosen version was trained after that date (leakage rule) |
 | `MODEL_NOT_FOUND` | 404 | Research only: unknown version |
 | `ML_SERVICE_UNAVAILABLE` | 503 | Forecasting service is down. Retry later |
-| `NOT_RETRYABLE` | 409 | Retry on a job that hasn't failed |
+| `NOT_RETRYABLE` | 409 | Retry on a job that hasn't failed, or on a batch with no retryable failures |
+| `NO_PRODUCTS`, `BATCH_TOO_LARGE` | 422 | Store-wide forecast with nothing to forecast, or more than `details.max` products |
 | `RATE_LIMITED` | 429 | Too many attempts; wait `Retry-After` seconds |
 | `INVALID_RESET_CODE` | 400 | Password reset code wrong, used or expired |
 | `LAST_OWNER`, `ALREADY_MEMBER`, `INVITATION_NOT_PENDING` | 409 | Team management (see Team) |
@@ -165,9 +166,46 @@ The points in this example are real output for FOODS_3_090.
 
 ### History, export, delete
 
-- `GET /v1/forecasts?storeId=&productId=&replay=&status=&page=&pageSize=` returns `{page, pageSize, total, items: [{forecastId, status, storeId, productId, sku, productName, asOfDate, horizonDays, method, isReplay, modelVersion, createdAt, actualsAvailable}]}`, newest first. `actualsAvailable: true` means a past true forecast now has actual sales: tag it "Actuals now available".
+- `GET /v1/forecasts?storeId=&productId=&replay=&status=&batch=&page=&pageSize=` returns `{page, pageSize, total, items: [{forecastId, status, storeId, productId, sku, productName, asOfDate, horizonDays, method, isReplay, modelVersion, createdAt, actualsAvailable}]}`, newest first. `actualsAvailable: true` means a past true forecast now has actual sales: tag it "Actuals now available". `batch=false` leaves out the runs created by store-wide batches (below), `batch=true` lists only those; leave it out for both.
 - `GET /v1/forecasts/{id}/export?format=csv` returns a CSV file.
 - `DELETE /v1/forecasts/{id}` → `204` (soft delete). You can delete your own forecasts; owners and managers can delete any in their workspace.
+
+## Store-wide forecasts (batches)
+
+One request forecasts every product of a store. This is the main forecast for a business owner: "what will I sell this week, product by product". Each product becomes an ordinary forecast run, so every item also opens with `GET /v1/forecasts/{forecastId}`.
+
+| Endpoint | Notes |
+| --- | --- |
+| `POST /v1/stores/{sid}/forecast-batches {horizonDays, productIds?}` | `202` with a batch (below). Without `productIds` it forecasts every active product with sales history in the store. Owners and managers (and anyone in the demo). If the same user already has a batch running for this store and length, that batch comes back with `200` instead of a new one |
+| `GET /v1/forecast-batches/{bid}` | Progress: poll every 2–3 s while `status` is `RUNNING` |
+| `GET /v1/forecast-batches/{bid}/items?q=&status=&page=&pageSize=` | One row per product, ordered by product name; `q` searches name and SKU; `pageSize` up to 200 |
+| `GET /v1/stores/{sid}/forecast-batches/latest?horizonDays=` | The newest batch for the store (in the demo: your newest). `404` if there is none yet |
+| `POST /v1/forecast-batches/{bid}/retry` | Queues again the products that failed for a temporary reason (ML service down, timeout). `409 NOT_RETRYABLE` if there are none |
+
+The batch:
+
+```json
+{"batchId": "…", "storeId": "…", "status": "RUNNING", "method": "COMPARE", "asOfDate": "2026-11-08",
+ "horizonDays": 7, "total": 100, "completed": 40, "failed": 0, "pending": 60,
+ "createdAt": "…", "finishedAt": null, "outdated": false}
+```
+
+- `method` is chosen for you: `COMPARE` (AI plus the baselines) when the store has an AI model, otherwise `BASELINE`. For a business store `asOfDate` is always the latest day of history.
+- `status` is `COMPLETED` once nothing is pending, even if some products failed (`failed > 0`); their items carry the reason.
+- `outdated: true` means the store's sales history changed after the batch (an import or a deleted import). Offer to forecast again.
+- Single forecasts run before batch runs, so opening one product is never stuck behind a whole store.
+- The demo store's per-product backtest is left out of batch runs; open the product's own forecast for it.
+
+An item:
+
+```json
+{"forecastId": "…", "productId": "…", "sku": "SKU-1", "productName": "Maize flour 2kg", "unitOfMeasure": "units",
+ "category": "Flour", "demandLabel": "Steady seller", "status": "COMPLETED", "error": null,
+ "aiUnavailableReason": null,
+ "points": [{"date": "2026-11-09", "ai": 12.4, "baseline": 11.0, "seasonalNaive": 13.0, "actual": null}]}
+```
+
+`points` is empty until the item is `COMPLETED`. `ai` is `null` when the store has no model or this product can't use it (`aiUnavailableReason`); show the baseline then.
 
 ## Sales imports (CSV)
 
