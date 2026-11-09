@@ -160,6 +160,23 @@ class FuturePrice(Base):
     unit_price: Mapped[float] = mapped_column(Numeric(12, 4))
 
 
+class ForecastBatch(Base):
+    """Forecasts for many products of one store at once. Each product is an ordinary ForecastRun."""
+
+    __tablename__ = "forecast_batches"
+    __table_args__ = (Index("ix_forecast_batches_store", "store_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    store_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"))
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    method: Mapped[ForecastMethod] = mapped_column(_enum(ForecastMethod))
+    as_of_date: Mapped[dt.date] = mapped_column(Date)
+    horizon_days: Mapped[int] = mapped_column(Integer)
+    history_version: Mapped[int] = mapped_column(Integer, default=0)
+    product_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ForecastRun(Base):
     """A forecast request and, once completed, its result. The job ID and forecast ID are the same."""
 
@@ -172,6 +189,9 @@ class ForecastRun(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
     store_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"))
     product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
+    # Set when the run is one product of a store-wide batch.
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("forecast_batches.id", ondelete="CASCADE"),
+                                                       index=True)
     requested_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     method: Mapped[ForecastMethod] = mapped_column(_enum(ForecastMethod))
     as_of_date: Mapped[dt.date] = mapped_column(Date)

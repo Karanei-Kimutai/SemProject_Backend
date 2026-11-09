@@ -103,11 +103,16 @@ def create_run(db: Session, user: User, store: Store, product: Product, as_of: d
 # ---- worker -------------------------------------------------------------------------------
 
 def claim_next(db: Session, run_id: uuid.UUID | None = None) -> uuid.UUID | None:
-    """Claim the oldest queued run (or a specific one). SKIP LOCKED lets several workers run safely."""
+    """Claim the oldest queued run (or a specific one). SKIP LOCKED lets several workers run safely.
+
+    Single forecasts go before batch runs, so someone waiting on one product isn't stuck behind a
+    whole store's batch.
+    """
     query = select(ForecastRun).where(ForecastRun.status == RunStatus.QUEUED)
     if run_id is not None:
         query = query.where(ForecastRun.id == run_id)
-    run = db.scalar(query.order_by(ForecastRun.created_at).limit(1).with_for_update(skip_locked=True))
+    order = (ForecastRun.batch_id.is_not(None), ForecastRun.created_at)
+    run = db.scalar(query.order_by(*order).limit(1).with_for_update(skip_locked=True))
     if run is None:
         db.rollback()
         return None
@@ -251,7 +256,8 @@ def _store_result(db: Session, run: ForecastRun, store: Store, product: Product,
     ]
     run.run_metrics = run_metrics(run.points)
 
-    if run.model_id and store.workspace.is_reference:
+    # The per-product backtest is an extra ML call; batches skip it (open the product for it).
+    if run.model_id and store.workspace.is_reference and run.batch_id is None:
         latest = models_info.versions_for(run.model_id)
         if latest:
             run.product_backtest = client.product_backtest(run.model_id, latest[-1]["version"], product.sku)

@@ -268,6 +268,49 @@ class ForecastPage(Page):
     items: list[ForecastSummary]
 
 
+# ---- store-wide forecast batches ------------------------------------------------------------
+
+class BatchIn(Api):
+    horizon_days: int = Field(ge=1, le=28)
+    # Leave out to forecast every active product with sales history in the store.
+    product_ids: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class BatchOut(Api):
+    batch_id: uuid.UUID
+    store_id: uuid.UUID
+    status: Literal["RUNNING", "COMPLETED"]
+    method: str
+    as_of_date: dt.date
+    horizon_days: int
+    total: int
+    completed: int
+    failed: int
+    pending: int
+    created_at: dt.datetime
+    finished_at: dt.datetime | None
+    # True once the store's sales history changed after this batch (an import or a deleted import).
+    outdated: bool
+
+
+class BatchItem(Api):
+    forecast_id: uuid.UUID
+    product_id: uuid.UUID
+    sku: str
+    product_name: str
+    unit_of_measure: str
+    category: str | None
+    demand_label: str | None
+    status: str
+    error: dict | None
+    ai_unavailable_reason: str | None
+    points: list[ForecastPointOut]
+
+
+class BatchItemPage(Page):
+    items: list[BatchItem]
+
+
 # ---- imports ------------------------------------------------------------------------------
 
 class ImportMappingIn(Api):
