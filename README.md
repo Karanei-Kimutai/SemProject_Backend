@@ -8,7 +8,7 @@ Android app ──HTTPS──▶ Caddy ──▶ API (FastAPI) ──┬──�
                        worker ─────┘            └──▶ ML service (mlengine, private network only)
 ```
 
-**Status (9 November 2026): all four slices are done, plus store-wide forecasts.** Working end to end:
+**Status (23 November 2026): all four slices are done, plus store-wide forecasts. Team management and invitations were removed at the project owner's request (migration `0006`), so each workspace belongs to the account that created it.** Working end to end:
 - sign-in with JWT access tokens and rotating refresh tokens;
 - workspaces, stores and products, with role checks;
 - sales history, data readiness and model capabilities;
