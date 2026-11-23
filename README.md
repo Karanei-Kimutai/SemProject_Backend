@@ -17,7 +17,7 @@ Android app ──HTTPS──▶ Caddy ──▶ API (FastAPI) ──┬──�
 - forecast history and CSV export;
 - CSV sales imports for business stores: upload, column mapping, validation report, merge with skip or replace for overlapping days, and delete;
 - own-data AI models: eligibility, training jobs on the ML service, the beat-the-baseline result, and weekly retraining;
-- team invitations and roles, password reset and change, rate limiting on sign-in, and the research summary and export.
+- password reset and change, rate limiting on sign-in, and the research summary and export.
 
 For demos without real business data, the Android app has a built-in sample sales file (Data → Upload sales data → Use the sample sales file), and the ML engine exports three Walmart sample CSVs (`python -m mlengine export-samples`; see [`docs/api.md`](docs/api.md#sample-data-for-demos)). The demo store (the Walmart "sample shop" in the app) is loaded from the ML engine's reference export. See [`docs/architecture.md`](docs/architecture.md#build-plan) for the build history.
 
@@ -76,7 +76,7 @@ createdb forecast_test                                   # once
 TEST_DATABASE_URL=postgresql+psycopg://user@localhost/forecast_test pytest
 ```
 
-There are 67 tests. They run against a real Postgres database and a fake ML service. For the demo replay, the fake ML service returns a response captured from the real one (`tests/fixtures/ml/`). The tests also check that requests sent to the ML service match the captured contract.
+There are 64 tests. They run against a real Postgres database and a fake ML service. For the demo replay, the fake ML service returns a response captured from the real one (`tests/fixtures/ml/`). The tests also check that requests sent to the ML service match the captured contract.
 
 ## Documentation
 

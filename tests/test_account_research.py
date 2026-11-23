@@ -4,7 +4,7 @@ import re
 from conftest import auth, signup
 
 from app import email, worker
-from app.models import Invitation, PasswordReset, User
+from app.models import PasswordReset, User
 
 
 def _code() -> str:
@@ -83,79 +83,6 @@ def test_rate_limits(client):
     # Other accounts aren't blocked by this one's limit.
     signup(client, "bob@example.com", "first-password")
     assert client.post("/v1/auth/login", json={"email": "bob@example.com", "password": "first-password"}).status_code == 200
-
-
-# ---- team -----------------------------------------------------------------------------------
-
-def _workspace(client, h):
-    return client.post("/v1/workspaces", json={"name": "Duka"}, headers=h).json()["id"]
-
-
-def test_invite_accept_and_manage(client, db):
-    owner = auth(signup(client, "owner@example.com"))
-    ws = _workspace(client, owner)
-    invitation = client.post(f"/v1/workspaces/{ws}/invitations", json={"email": "Bob@Example.com", "role": "MANAGER"},
-                             headers=owner)
-    assert invitation.status_code == 201 and invitation.json()["status"] == "PENDING"
-    assert email.outbox[-1]["To"] == "bob@example.com" and "Duka" in email.outbox[-1]["Subject"]
-    assert len(client.get(f"/v1/workspaces/{ws}/invitations", headers=owner).json()) == 1
-
-    bob = auth(signup(client, "bob@example.com"))  # signs up after being invited
-    mine = client.get("/v1/me/invitations", headers=bob).json()
-    assert [(i["workspaceName"], i["role"], i["invitedBy"]) for i in mine] == [("Duka", "MANAGER", "U")]
-    accepted = client.post(f"/v1/invitations/{mine[0]['id']}/accept", headers=bob)
-    assert accepted.json()["status"] == "ACCEPTED"
-    assert client.post(f"/v1/invitations/{mine[0]['id']}/accept", headers=bob).status_code == 409
-    roles = {m["email"]: m["role"] for m in client.get(f"/v1/workspaces/{ws}/members", headers=bob).json()}
-    assert roles == {"owner@example.com": "OWNER", "bob@example.com": "MANAGER"}
-    assert any(w["workspaceId"] == ws for w in client.get("/v1/me", headers=bob).json()["workspaces"])
-
-    # Managers can't manage the team; owners can change roles and remove members.
-    assert client.post(f"/v1/workspaces/{ws}/invitations", json={"email": "c@example.com"}, headers=bob).status_code == 403
-    bob_id = next(m["userId"] for m in client.get(f"/v1/workspaces/{ws}/members", headers=owner).json()
-                  if m["email"] == "bob@example.com")
-    patched = client.patch(f"/v1/workspaces/{ws}/members/{bob_id}", json={"role": "VIEWER"}, headers=owner)
-    assert patched.json()["role"] == "VIEWER"
-    again = client.post(f"/v1/workspaces/{ws}/invitations", json={"email": "bob@example.com"}, headers=owner)
-    assert again.json()["error"]["code"] == "ALREADY_MEMBER"
-    assert client.delete(f"/v1/workspaces/{ws}/members/{bob_id}", headers=owner).status_code == 204
-    assert client.get(f"/v1/workspaces/{ws}/stores", headers=bob).status_code == 404
-
-
-def test_last_owner_is_protected_and_members_can_leave(client):
-    owner_tokens = signup(client, "owner@example.com")
-    owner = auth(owner_tokens)
-    ws = _workspace(client, owner)
-    owner_id = client.get("/v1/me", headers=owner).json()["id"]
-    assert client.delete(f"/v1/workspaces/{ws}/members/{owner_id}", headers=owner).json()["error"]["code"] == "LAST_OWNER"
-    assert client.patch(f"/v1/workspaces/{ws}/members/{owner_id}", json={"role": "VIEWER"},
-                        headers=owner).json()["error"]["code"] == "LAST_OWNER"
-    client.post(f"/v1/workspaces/{ws}/invitations", json={"email": "bob@example.com", "role": "VIEWER"}, headers=owner)
-    bob = auth(signup(client, "bob@example.com"))
-    client.post(f"/v1/invitations/{client.get('/v1/me/invitations', headers=bob).json()[0]['id']}/accept", headers=bob)
-    bob_id = client.get("/v1/me", headers=bob).json()["id"]
-    assert client.delete(f"/v1/workspaces/{ws}/members/{bob_id}", headers=bob).status_code == 204  # leave
-
-
-def test_decline_revoke_expire(client, db):
-    owner = auth(signup(client, "owner@example.com"))
-    ws = _workspace(client, owner)
-    bob = auth(signup(client, "bob@example.com"))
-    first = client.post(f"/v1/workspaces/{ws}/invitations", json={"email": "bob@example.com"}, headers=owner).json()
-    assert client.post(f"/v1/invitations/{first['id']}/decline", headers=bob).json()["status"] == "DECLINED"
-    second = client.post(f"/v1/workspaces/{ws}/invitations", json={"email": "bob@example.com"}, headers=owner).json()
-    assert client.delete(f"/v1/workspaces/{ws}/invitations/{second['id']}", headers=owner).status_code == 204
-    assert client.get("/v1/me/invitations", headers=bob).json() == []
-    third = client.post(f"/v1/workspaces/{ws}/invitations", json={"email": "bob@example.com"}, headers=owner).json()
-    db.query(Invitation).filter_by(id=third["id"]).update(
-        {"expires_at": dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)})
-    db.commit()
-    assert client.get("/v1/me/invitations", headers=bob).json() == []
-    assert client.post(f"/v1/invitations/{third['id']}/accept", headers=bob).status_code == 409
-    # Someone else can't accept an invitation addressed to Bob.
-    fourth = client.post(f"/v1/workspaces/{ws}/invitations", json={"email": "bob@example.com"}, headers=owner).json()
-    eve = auth(signup(client, "eve@example.com"))
-    assert client.post(f"/v1/invitations/{fourth['id']}/accept", headers=eve).status_code == 404
 
 
 # ---- research export --------------------------------------------------------------------------

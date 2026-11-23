@@ -45,7 +45,6 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
     app_name: str = "Retail Demand Forecasting"
 
-    invitation_days: int = 14
     password_reset_minutes: int = 30
     password_reset_max_attempts: int = 5
     rate_limit_enabled: bool = True
