@@ -52,7 +52,7 @@ They talk over a small internal API. This lets each be changed, tested and deplo
 - **Sessions** commonly use two tokens:
   - a short-lived **access token** (minutes) sent with every request;
   - a long-lived **refresh token** (weeks) used only to get new access tokens, and revocable.
-- **Multi-tenancy:** many businesses share one system, so every request must be checked against "may this user see this shop?". Data is grouped by tenant (here, a *workspace*), and users have **roles** (owner, manager, viewer).
+- **Multi-tenancy:** many businesses share one system, so every request must be checked against "may this user see this shop?". Data is grouped by tenant (here, a *workspace*), and each user can reach only the tenants they belong to. Systems with teams usually add **roles** (owner, manager, viewer) on top.
 
 ### 2.3 Getting the data in
 
@@ -151,10 +151,7 @@ The ML service is **stateless for forecasting**: the backend sends each product'
 - **Tokens:**
   - access tokens are 15-minute JWTs;
   - refresh tokens are random 48-byte values (only their SHA-256 is stored), valid for 30 days and replaced on every use. Reusing an old one revokes all of that user's sessions, which is the standard defence against a stolen token.
-- **Workspaces and stores:** a business is a *workspace* containing one or more *stores*. A user's *membership* gives them a role. The person who creates a workspace is its owner; there are no invitations, so the other roles exist only in the data model:
-  - **Owner:** everything;
-  - **Manager:** upload, train and forecast;
-  - **Viewer:** read only.
+- **Workspaces and stores:** a business is a *workspace* containing one or more *stores*. A *membership* links a user to a workspace. The person who creates a workspace is its only member and its **owner**, who can do everything in it. There are no teams or invitations. (The data model still has **manager** and **viewer** roles from an earlier team feature, but nothing can assign them.)
 - **Access checks:** every lookup of a store, product or forecast goes through one function, `deps.store_access`. Something a user may not see returns `404 Not Found`, not `403`, so its existence isn't revealed.
 - **The demo workspace** (the Walmart "sample shop") is shared and read-only. Forecasts made there are private to the user who made them.
 - **Account extras:**
@@ -246,7 +243,7 @@ The worker runs a maintenance pass every hour (`worker.maintenance`). It:
   - [`openapi.json`](openapi.json) is generated from the code by `python scripts/export_openapi.py`, and a test fails if it is out of date.
 - **Errors** always have the shape `{"error": {"code", "message", "details", "requestId"}}`, and the app maps each code to a plain message. Every response carries a request ID that also appears in the logs.
 - **Tests:**
-  - 67 tests run against a real Postgres database and a fake ML service built with `httpx.MockTransport`;
+  - 64 tests run against a real Postgres database and a fake ML service built with `httpx.MockTransport`;
   - for the demo replay, the fake returns a response captured from the real ML service, and the tests check that requests sent to the ML service match the captured contract.
 - **Deployment:** Docker Compose with four services (`db`, `ml`, `api`, `worker`) plus Caddy in production. Secrets come from `.env`. Database migrations run when the API container starts. See [`deployment.md`](deployment.md).
 - **Local setup on Windows:** `scripts/setup-local.ps1` (see `SETUP.md` in the app repository).
@@ -301,7 +298,7 @@ A single-product forecast (`POST /v1/forecasts`) follows the same steps for one 
 ## 6. Walkthrough: training a shop's own model
 
 1. **Eligibility.** `GET /v1/stores/{sid}/models/eligibility` asks the ML service whether the workspace's history is enough. The app shows each check as "value of required", for example "64 of 120 days".
-2. **Request.** An owner or manager taps Train: `POST …/models/train`. The backend checks eligibility again, locks the workspace (only one training run at a time) and creates a `QUEUED` training run.
+2. **Request.** The owner taps Train: `POST …/models/train`. The backend checks eligibility again, locks the workspace (only one training run at a time) and creates a `QUEUED` training run.
 3. **Submit.** The worker sends the workspace's recorded history (all stores, the last 730 days) and the store's country (for public holidays) to the ML service's `/train`. The run becomes `TRAINING` with the ML job ID.
 4. **Poll.** About every 5 seconds the worker checks the ML job. If the ML service restarted and lost the job, it is resubmitted (up to 3 attempts). After 30 minutes the run fails with `TRAINING_TIMEOUT`.
 5. **Outcome.**

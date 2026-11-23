@@ -23,7 +23,7 @@ Every error has the same shape. Map `code` to your own localised message, and fa
 | `INVALID_REFRESH_TOKEN` | 401 | Refresh token expired, revoked or reused. Sign in again |
 | `EMAIL_TAKEN`, `STORE_CODE_TAKEN`, `SKU_TAKEN` | 409 | Duplicates |
 | `REGISTRATION_CLOSED` | 403 | Self sign-up is disabled on this server |
-| `FORBIDDEN` | 403 | Role doesn't allow it (viewer, demo data is read-only, research-only option) |
+| `FORBIDDEN` | 403 | Not allowed (demo data is read-only, research-only option) |
 | `NOT_FOUND` | 404 | Also returned for things the user isn't allowed to see |
 | `INSUFFICIENT_HISTORY` | 422 | Fewer than 21 days of history ending on the as-of date (AI method) |
 | `TOO_MANY_GAPS` | 422 | More than 3 unrecorded days in the last 21 (AI method) |
@@ -48,16 +48,20 @@ Every error has the same shape. Map `code` to your own localised message, and fa
 6. `POST /v1/auth/logout {refreshToken}` → `204`.
 7. Store tokens in Android Keystore-backed encrypted storage.
 
-`GET /v1/me` returns `{id, email, displayName, isResearch, workspaces: [{workspaceId, name, role, isReference}]}`. `role` is `OWNER`, `MANAGER`, `VIEWER` or `REFERENCE`.
+`GET /v1/me` returns `{id, email, displayName, isResearch, workspaces: [{workspaceId, name, role, isReference}]}`. `role` is `OWNER` for your own workspaces and `REFERENCE` for the demo workspace. (`MANAGER` and `VIEWER` still exist in the data model, but since team management was removed nothing can assign them.)
 
 ## Permissions
 
-| | Demo (Reference) workspace | Own workspace: OWNER/MANAGER | Own workspace: VIEWER |
-| --- | --- | --- | --- |
-| Read stores, products, history | yes | yes | yes |
-| Create forecasts | yes | yes | no |
-| Add or edit products and stores | no (read-only) | yes | no |
-| See forecasts | only your own | everyone's in the workspace | everyone's |
+Each workspace has one member: the account that created it, as `OWNER`. There are no invitations or team management.
+
+| | Demo (Reference) workspace | Your own workspace |
+| --- | --- | --- |
+| Read stores, products, history | yes | yes |
+| Create forecasts | yes | yes |
+| Upload sales, train the model, add or edit products and stores | no (read-only) | yes |
+| See forecasts | only your own | all of them |
+
+The code still enforces narrower rules for the unassignable `MANAGER` (like an owner) and `VIEWER` (read only) roles.
 
 ## Workspaces, stores, products
 
@@ -168,7 +172,7 @@ The points in this example are real output for FOODS_3_090.
 
 - `GET /v1/forecasts?storeId=&productId=&replay=&status=&batch=&page=&pageSize=` returns `{page, pageSize, total, items: [{forecastId, status, storeId, productId, sku, productName, asOfDate, horizonDays, method, isReplay, modelVersion, createdAt, actualsAvailable}]}`, newest first. `actualsAvailable: true` means a past true forecast now has actual sales: tag it "Actuals now available". `batch=false` leaves out the runs created by store-wide batches (below), `batch=true` lists only those; leave it out for both.
 - `GET /v1/forecasts/{id}/export?format=csv` returns a CSV file.
-- `DELETE /v1/forecasts/{id}` → `204` (soft delete). You can delete your own forecasts; owners and managers can delete any in their workspace.
+- `DELETE /v1/forecasts/{id}` → `204` (soft delete). You can delete your own forecasts, and any forecast in a workspace you own.
 
 ## Store-wide forecasts (batches)
 
@@ -176,7 +180,7 @@ One request forecasts every product of a store. This is the main forecast for a 
 
 | Endpoint | Notes |
 | --- | --- |
-| `POST /v1/stores/{sid}/forecast-batches {horizonDays, productIds?}` | `202` with a batch (below). Without `productIds` it forecasts every active product with sales history in the store. Owners and managers (and anyone in the demo). If the same user already has a batch running for this store and length, that batch comes back with `200` instead of a new one |
+| `POST /v1/stores/{sid}/forecast-batches {horizonDays, productIds?}` | `202` with a batch (below). Without `productIds` it forecasts every active product with sales history in the store. Workspace owners (and anyone in the demo). If the same user already has a batch running for this store and length, that batch comes back with `200` instead of a new one |
 | `GET /v1/forecast-batches/{bid}` | Progress: poll every 2–3 s while `status` is `RUNNING` |
 | `GET /v1/forecast-batches/{bid}/items?q=&status=&page=&pageSize=` | One row per product, ordered by product name; `q` searches name and SKU; `pageSize` up to 200 |
 | `GET /v1/stores/{sid}/forecast-batches/latest?horizonDays=` | The newest batch for the store (in the demo: your newest). `404` if there is none yet |
@@ -209,7 +213,7 @@ An item:
 
 ## Sales imports (CSV)
 
-These follow the import wizard in spec §8.6. Imports are allowed only in your own workspaces, by OWNER and MANAGER (`403` in the demo workspace).
+These follow the import wizard in spec §8.6. Imports are allowed only in your own workspaces (`403` in the demo workspace).
 
 ### 1. Upload: `POST /v1/stores/{sid}/imports`
 
@@ -353,11 +357,11 @@ A business workspace gets its own AI model, trained on its own uploaded sales. T
  "rules": {…}, "latestRun": null}
 ```
 
-Use it for the dashboard's progress line ("60 of 120 days"). The result is cached until the history changes. Viewers can read it. On the demo store, every training endpoint returns `409 REFERENCE_MODEL_FIXED`.
+Use it for the dashboard's progress line ("60 of 120 days"). The result is cached until the history changes. On the demo store, every training endpoint returns `409 REFERENCE_MODEL_FIXED`.
 
 ### Train: `POST /v1/stores/{sid}/models/train`
 
-- Owners and managers only, with no body.
+- Workspace owners only, with no body.
 - Returns `202` with a training run, or `200` with the run already in progress (only one runs at a time per workspace).
 - Returns `422 NOT_ELIGIBLE` with `details.checks` if the workspace isn't eligible.
 
