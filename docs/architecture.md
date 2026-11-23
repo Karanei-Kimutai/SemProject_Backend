@@ -109,7 +109,7 @@ migrations/            Alembic
 ## Own-data training
 
 1. **Request.** `POST …/models/train` checks eligibility (ML `/eligibility`, cached by the stores' `history_version`). It then locks the workspace row and creates a `QUEUED` run, unless one is already active.
-2. **Submit.** The worker (forecasts first) sends the workspace's history to ML `/train`: all stores, the last 730 days, recorded days only, so gaps stay gaps. The run becomes `TRAINING` with the ML job ID, and the history versions sent are recorded.
+2. **Submit.** The worker (forecasts first) sends the workspace's history to ML `/train`: all stores, up to the last 730 days (a cap, not a requirement: a younger shop sends all its history), recorded days only, so gaps stay gaps. The run becomes `TRAINING` with the ML job ID, and the history versions sent are recorded.
 3. **Poll.** About every 5 s the worker checks ML `/train/{jobId}`:
    - `COMPLETED` → the run is `COMPLETED`, with outcome `TRAINED`, `GATE_FAILED` or `NOT_ELIGIBLE`, and the model cache is cleared.
    - `JOB_NOT_FOUND` (the ML service restarted; its jobs live in memory) → resubmit, up to 3 attempts.

@@ -224,8 +224,8 @@ The import pipeline (`app/services/imports.py`, walked through in section 4):
 ### 3.7 Training per shop (section 2.7)
 
 Walked through in section 6. In short:
-- **Eligibility:** at least 10 products with 21+ days, 120 days of store history and 4,500 product-days. It is checked by the ML service and cached until the history changes.
-- **Training:** a background job on the ML service, sent the shop's last 730 days.
+- **Eligibility:** at least 10 products with 21+ days, 120 days of store history and 4,500 recorded product-days (one product on one day counts as 1). All three must pass, so with exactly 120 days a shop needs about 38 products recorded every day; a 10-product shop needs about 450 days. It is checked by the ML service and cached until the history changes.
+- **Training:** a background job on the ML service, sent up to the shop's last 730 days (all of it, for a shop with less).
 - **Gate:** the shop's model is used only if it beats "same as last day" on both RMSE and MAE.
 - **Retraining:** weekly, once a shop has a trained model and new sales have arrived.
 
@@ -299,7 +299,7 @@ A single-product forecast (`POST /v1/forecasts`) follows the same steps for one 
 
 1. **Eligibility.** `GET /v1/stores/{sid}/models/eligibility` asks the ML service whether the workspace's history is enough. The app shows each check as "value of required", for example "64 of 120 days".
 2. **Request.** The owner taps Train: `POST …/models/train`. The backend checks eligibility again, locks the workspace (only one training run at a time) and creates a `QUEUED` training run.
-3. **Submit.** The worker sends the workspace's recorded history (all stores, the last 730 days) and the store's country (for public holidays) to the ML service's `/train`. The run becomes `TRAINING` with the ML job ID.
+3. **Submit.** The worker sends the workspace's recorded history (all stores, up to the last 730 days; a shop with less sends everything it has) and the store's country (for public holidays) to the ML service's `/train`. The run becomes `TRAINING` with the ML job ID. The ML service holds back the last 28 days as the backtest and the 28 before them for validation, and needs 21 days of past sales before the first training example, so a 120-day shop trains on about 43 days of examples.
 4. **Poll.** About every 5 seconds the worker checks the ML job. If the ML service restarted and lost the job, it is resubmitted (up to 3 attempts). After 30 minutes the run fails with `TRAINING_TIMEOUT`.
 5. **Outcome.**
    - `TRAINED`: the new model beat "same as last day" on both RMSE and MAE over the last 28 days. The ML service registers it as `own-<workspaceId>`. From the next forecast on, capabilities report AI as available and `COMPARE` forecasts include it.
