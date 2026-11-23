@@ -10,7 +10,7 @@ Android app ──HTTPS──▶ Caddy ──▶ API (FastAPI) ──┬──�
 
 **Status (23 November 2026): all four slices are done, plus store-wide forecasts. Team management and invitations were removed at the project owner's request (migration `0006`), so each workspace belongs to the account that created it.** Working end to end:
 - sign-in with JWT access tokens and rotating refresh tokens;
-- workspaces, stores and products, with role checks;
+- workspaces, stores and products, each workspace owned by the account that created it, with access checks on every request;
 - sales history, data readiness and model capabilities;
 - forecast jobs through a Postgres-backed worker, including demo replays with actual sales and stored backtests;
 - store-wide forecasts: one request forecasts every product in a shop (a batch of ordinary jobs, with progress and retry);

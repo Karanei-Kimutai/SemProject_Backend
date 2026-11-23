@@ -47,7 +47,7 @@ migrations/            Alembic
 | `users` | email (unique, lower-case), password_hash, is_research | |
 | `refresh_tokens` | token_hash (SHA-256), expires_at, revoked_at | Rotated on each refresh; reuse revokes all of the user's tokens |
 | `workspaces` | is_reference | Exactly one Reference workspace (the M5 demo) |
-| `memberships` | (workspace, user), role | OWNER, MANAGER, VIEWER |
+| `memberships` | (workspace, user), role | One per workspace: its creator, as OWNER. MANAGER and VIEWER remain in the enum but can't be assigned |
 | `stores` | code (sent to ML as `storeId`), country, timezone, model_id, history_start/end, history_version | `model_id` is `m5-ca1-foods` for the demo and `own-<workspaceId>` otherwise |
 | `products` | sku (sent to ML as `productId`), category, first_price_date, demand_* | Demand class cached from the last forecast |
 | `sales_daily` | PK (store, product, date), units_sold, unit_price, import_id | **A missing row means the day wasn't recorded, never zero** |
@@ -64,7 +64,7 @@ migrations/            Alembic
 ## Forecast job lifecycle
 
 1. `POST /v1/forecasts` runs these checks, and returns a typed `422` before anything is queued if one fails:
-   - **Role:** the user may forecast in this workspace.
+   - **Access:** the user owns this workspace, or it is the demo.
    - **As-of date:**
      - business stores: always the last day of history;
      - demo: from `replayMin` (research users: `researchMin`) to the last day of history, and the horizon must stay inside the M5 calendar.
