@@ -23,7 +23,7 @@ app/
 ├── deps.py            current_user, workspace/store access rules
 ├── errors.py          ApiError and the single error shape
 ├── ml_client.py       httpx client for the ML service (X-Internal-Token)
-├── routers/           auth (incl. password reset), workspaces (and stores), team, products (history, readiness),
+├── routers/           auth (incl. password reset), workspaces (and stores), products (history, readiness),
 │                      models_api, forecasts, batches, imports, training, research
 ├── services/
 │   ├── history.py     history loading, known prices, readiness rules
@@ -58,7 +58,6 @@ migrations/            Alembic
 | `imports` | store, status, file content (until imported), columns, detected, mapping, missing_days_are_zero, summary, result | One CSV upload; `(store, user, idempotency_key)` is unique |
 | `import_rows` | PK (import, store, sku, date), units, price, source_rows, zero_filled | Validated, normalised staging rows; removed after confirm |
 | `import_issues` | import, severity, code, row_number, column, message | Up to 5,000 per import |
-| `invitations` | workspace, email, role, status, expires_at | Accepted in-app by the matching signed-in user |
 | `password_resets` | user, code_hash, attempts, expires_at, used_at | Single-use reset codes |
 | `training_runs` | workspace, status, outcome, trigger, ml_job_id, history_versions, model_version, result | One own-data training job; at most one active per workspace |
 
@@ -127,9 +126,8 @@ migrations/            Alembic
 - The ML service is reachable only on the internal Docker network and requires `X-Internal-Token`.
 - Rate limits on the sign-in endpoints (`app/ratelimit.py`) are in memory, which is right for the single API process in Docker Compose. With several API processes, move the counters to Postgres or Redis.
 - Password reset: 8-digit single-use codes, stored as SHA-256 (with the user ID), valid for 30 minutes, at most 5 attempts. Requesting one never reveals whether the account exists. A reset or password change revokes every refresh token.
-- Invitations are accepted inside the app by the signed-in user whose email matches, so there are no bearer links to leak.
 - Email (`app/email.py`) is best effort, so a mail outage never fails a request. The `console` backend logs messages (development), and `smtp` sends them.
-- Not done: email verification on sign-up. Anyone can register any address, but being invited still requires signing in with that exact address.
+- Not done: email verification on sign-up. Anyone can register any address.
 
 ## Build plan
 
@@ -140,3 +138,4 @@ migrations/            Alembic
 | 3 | Own-data training: eligibility via `/internal/v1/eligibility`, `POST /v1/stores/{sid}/models/train` → ML `/train` job, polling, gate result on the model screen, weekly retrain | **Done** (47 tests in total; checked end to end in Docker: the sample shop trains in 23 s and passes the gate) |
 | 4 | Team invitations and member management, research summary and export, rate limiting, password reset and change, email (console/SMTP) | **Done** (56 tests in total) |
 | 5 | Store-wide forecasts for the business version of the app: `forecast_batches` (migration `0005`), create, progress, items, retry, latest; single forecasts claimed first; `GET /v1/forecasts?batch=` | **Done** (67 tests in total; approved by the project owner and merged into `main`) |
+| 6 | Team invitations and member management removed at the project owner's request: the `team` router, the `invitations` table (dropped by migration `0006`) and their tests. Workspaces keep memberships and roles | **Done** (64 tests in total) |

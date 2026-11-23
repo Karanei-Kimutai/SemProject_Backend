@@ -23,7 +23,7 @@ Build on Linux (as above), or from a Windows checkout of the ML engine that incl
 
 ## Email
 
-Password reset codes and invitation notices are sent by email. With `EMAIL_BACKEND=console` (the default), they only appear in `docker compose logs api`: fine for a demo, but users can't reset passwords themselves. For real email, set `EMAIL_BACKEND=smtp` and the `SMTP_*` variables in `.env` (any SMTP provider works; Brevo and Gmail app passwords both have free tiers), then run `docker compose up -d`. A mail outage never fails a request; failures are logged.
+Password reset codes are sent by email. With `EMAIL_BACKEND=console` (the default), they only appear in `docker compose logs api`: fine for a demo, but users can't reset passwords themselves. For real email, set `EMAIL_BACKEND=smtp` and the `SMTP_*` variables in `.env` (any SMTP provider works; Brevo and Gmail app passwords both have free tiers), then run `docker compose up -d`. A mail outage never fails a request; failures are logged.
 
 ## Load the demo workspace
 

@@ -37,7 +37,6 @@ Every error has the same shape. Map `code` to your own localised message, and fa
 | `NO_PRODUCTS`, `BATCH_TOO_LARGE` | 422 | Store-wide forecast with nothing to forecast, or more than `details.max` products |
 | `RATE_LIMITED` | 429 | Too many attempts; wait `Retry-After` seconds |
 | `INVALID_RESET_CODE` | 400 | Password reset code wrong, used or expired |
-| `LAST_OWNER`, `ALREADY_MEMBER`, `INVITATION_NOT_PENDING` | 409 | Team management (see Team) |
 
 ## Authentication
 
@@ -425,25 +424,6 @@ Too many attempts return `429 RATE_LIMITED` with a `Retry-After` header (seconds
 | refresh | 60 per minute per IP |
 | password-reset request | 3 per hour per email, 5 per hour per IP |
 | password-reset confirm | 10 per 10 minutes per IP |
-
-## Team (spec §8.12)
-
-Only **owners** manage the team. Any member can see the member list and leave. The demo workspace has no team (`403`).
-
-| Endpoint | Notes |
-| --- | --- |
-| `GET /v1/workspaces/{wid}/members` | `[{userId, email, displayName, role, joinedAt}]` |
-| `PATCH /v1/workspaces/{wid}/members/{userId} {role}` | Owners only. `role` is `OWNER`, `MANAGER` or `VIEWER` |
-| `DELETE /v1/workspaces/{wid}/members/{userId}` | Owners remove anyone; anyone can remove themselves (leave) |
-| `POST /v1/workspaces/{wid}/invitations {email, role}` | Owners only, `201`. Emails a notification, and a new invitation replaces a pending one to the same address. `409 ALREADY_MEMBER` if they're already in the workspace |
-| `GET /v1/workspaces/{wid}/invitations` | Pending invitations (owners), for the "pending invitations" list |
-| `DELETE /v1/workspaces/{wid}/invitations/{iid}` | Revoke |
-| `GET /v1/me/invitations` | Invitations to the signed-in user's email: `[{id, workspaceId, workspaceName, email, role, status, invitedBy, createdAt, expiresAt}]` |
-| `POST /v1/invitations/{iid}/accept` / `decline` | Only the invited email's user can respond. `409 INVITATION_NOT_PENDING` if it was revoked, already answered, or expired (after 14 days) |
-
-**Accepting doesn't use email links.** The invited person signs in, or registers with the invited email, and the app shows `GET /v1/me/invitations`. Check it after sign-in, and show a badge in Settings → Invitations. After accepting, reload `GET /v1/me`.
-
-**Last owner:** removing or demoting a workspace's last owner returns `409 LAST_OWNER`.
 
 ## Research (research users only)
 

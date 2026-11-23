@@ -401,34 +401,3 @@ class EligibilityOut(Api):
     rules: dict | None
     stores_in_model: list[str]
     latest_run: TrainingRunOut | None
-
-
-# ---- team ---------------------------------------------------------------------------------
-
-class MemberOut(Api):
-    user_id: uuid.UUID
-    email: str
-    display_name: str
-    role: str
-    joined_at: dt.datetime
-
-
-class MemberPatch(Api):
-    role: Literal["OWNER", "MANAGER", "VIEWER"]
-
-
-class InvitationIn(Api):
-    email: EmailStr
-    role: Literal["OWNER", "MANAGER", "VIEWER"] = "VIEWER"
-
-
-class InvitationOut(Api):
-    id: uuid.UUID
-    workspace_id: uuid.UUID
-    workspace_name: str
-    email: str
-    role: str
-    status: str
-    invited_by: str | None
-    created_at: dt.datetime
-    expires_at: dt.datetime

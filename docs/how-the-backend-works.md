@@ -151,15 +151,14 @@ The ML service is **stateless for forecasting**: the backend sends each product'
 - **Tokens:**
   - access tokens are 15-minute JWTs;
   - refresh tokens are random 48-byte values (only their SHA-256 is stored), valid for 30 days and replaced on every use. Reusing an old one revokes all of that user's sessions, which is the standard defence against a stolen token.
-- **Workspaces and stores:** a business is a *workspace* containing one or more *stores*. A user's *membership* gives them a role:
-  - **Owner:** everything, including the team;
+- **Workspaces and stores:** a business is a *workspace* containing one or more *stores*. A user's *membership* gives them a role. The person who creates a workspace is its owner; there are no invitations, so the other roles exist only in the data model:
+  - **Owner:** everything;
   - **Manager:** upload, train and forecast;
   - **Viewer:** read only.
 - **Access checks:** every lookup of a store, product or forecast goes through one function, `deps.store_access`. Something a user may not see returns `404 Not Found`, not `403`, so its existence isn't revealed.
 - **The demo workspace** (the Walmart "sample shop") is shared and read-only. Forecasts made there are private to the user who made them.
 - **Account extras:**
   - **password reset:** 8-digit single-use codes, sent by email (in development, printed in the API logs);
-  - **team invitations**, accepted inside the app by the invited email;
   - **password change.** A reset or change signs out every other session.
 
 ### 3.3 Getting the data in (section 2.3)
@@ -324,7 +323,7 @@ The design is sound for a single-server project. Larger systems often do the fol
 | Run many API servers behind a load balancer | One API process | Sign-in rate limits are kept in memory, which is only correct with one process |
 | Store files in object storage (S3) | CSVs stored in Postgres until imported (≤ 10 MB) | No extra service |
 | Run a model registry service (MLflow etc.) | The ML engine's own folder of versioned model files | Small number of models |
-| Verify email addresses at sign-up | Not done | Invitations still require signing in with the exact invited address |
+| Verify email addresses at sign-up | Not done | Only password reset codes are emailed |
 | Monitor forecast accuracy on dashboards | Actual sales are attached to past forecasts; no dashboard | Out of scope |
 | Accept data from till systems automatically | CSV upload only | Businesses can export CSVs from almost anything |
 
@@ -350,7 +349,6 @@ The design is sound for a single-server project. Larger systems often do the fol
 | Own-data training and weekly retraining | `app/services/training.py`, `app/routers/training.py` |
 | The worker and hourly maintenance | `app/worker.py` |
 | Loading the Walmart demo store | `app/seed.py`, `app/cli.py` |
-| Team, invitations, roles | `app/routers/team.py` |
 | Research summary and export (research app only) | `app/routers/research.py` |
 | Tests | `tests/` (`conftest.py` sets up the database and the fake ML service) |
 
@@ -378,4 +376,4 @@ The design is sound for a single-server project. Larger systems often do the fol
 | `SKIP LOCKED` | A Postgres feature letting several workers take different jobs without waiting on each other |
 | Staging table | Where uploaded rows wait, checked, until the user confirms |
 | Worker | The background process that runs forecast and training jobs |
-| Workspace | One business (tenant), containing its stores, products and team |
+| Workspace | One business (tenant), containing its stores and products |
